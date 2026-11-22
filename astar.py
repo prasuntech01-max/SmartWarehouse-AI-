@@ -15,8 +15,17 @@ class PathNotFoundError(Exception):
 class AStarPlanner:
     """A* Pathfinding supporting both static 2D grid searches and Space-Time reservation planning."""
 
-    def __init__(self, warehouse: Warehouse, reservation_table: Optional[ReservationTable] = None):
-        self.warehouse = warehouse
+    def __init__(
+        self,
+        warehouse: Optional[Warehouse] = None,
+        reservation_table: Optional[ReservationTable] = None,
+        grid: Optional[Warehouse] = None,
+    ):
+        wh = warehouse if warehouse is not None else grid
+        if wh is None:
+            raise ValueError("A valid Warehouse or WarehouseGrid instance must be provided")
+        self.warehouse = wh
+        self.grid = wh  # alias for grid-based calls
         self.reservation_table = reservation_table
 
     @staticmethod
@@ -223,3 +232,9 @@ class AStarPlanner:
                 goal=goal,
                 raise_on_failure=raise_on_failure,
             )
+
+
+# Canonical alias for space-time planner
+SpaceTimeAStarPlanner = AStarPlanner
+
+__all__ = ["AStarPlanner", "SpaceTimeAStarPlanner", "PathNotFoundError"]

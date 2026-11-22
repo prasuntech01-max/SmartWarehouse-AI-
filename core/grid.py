@@ -1,8 +1,9 @@
-"""Warehouse grid representation (aliased to warehouse.Warehouse to avoid duplicate code)."""
+"""Warehouse grid module.
 
-from warehouse import Warehouse
+Re-exports Warehouse and WarehouseGrid directly from warehouse.py
+to maintain a single canonical definition across the codebase.
+"""
 
+from warehouse import Warehouse, WarehouseGrid
 
-class WarehouseGrid(Warehouse):
-    """WarehouseGrid subclass aliasing Warehouse for backward compatibility."""
-    pass
+__all__ = ["Warehouse", "WarehouseGrid"]

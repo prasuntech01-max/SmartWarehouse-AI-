@@ -100,3 +100,9 @@ class Warehouse:
                 if self.is_walkable(nx, ny):
                     pick_spots.add((nx, ny))
         return sorted(list(pick_spots))
+
+
+# Canonical alias for grid nomenclature
+WarehouseGrid = Warehouse
+
+__all__ = ["Warehouse", "WarehouseGrid"]

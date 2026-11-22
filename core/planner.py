@@ -1,10 +1,9 @@
-"""Space-Time A* planner (aliased to astar.AStarPlanner to avoid duplicate code)."""
+"""Space-Time A* planner module.
 
-from astar import AStarPlanner
+Re-exports AStarPlanner and SpaceTimeAStarPlanner directly from astar.py
+to maintain a single canonical definition across the codebase.
+"""
 
+from astar import AStarPlanner, SpaceTimeAStarPlanner, PathNotFoundError
 
-class SpaceTimeAStarPlanner(AStarPlanner):
-    """SpaceTimeAStarPlanner subclass aliasing AStarPlanner for backward compatibility."""
-
-    def __init__(self, grid, reservation_table=None):
-        super().__init__(warehouse=grid, reservation_table=reservation_table)
+__all__ = ["AStarPlanner", "SpaceTimeAStarPlanner", "PathNotFoundError"]
