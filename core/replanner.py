@@ -90,18 +90,4 @@ class DynamicReplanner:
 
     def _clear_future_reservations(self, robot_id: int, from_time: int) -> None:
         """Removes reservations for a robot starting from a specified timestep."""
-        v_to_del = [
-            (x, y, t)
-            for (x, y, t), r in self.reservation_table.vertex_reservations.items()
-            if r == robot_id and t >= from_time
-        ]
-        for k in v_to_del:
-            del self.reservation_table.vertex_reservations[k]
-
-        e_to_del = [
-            (u, v, t)
-            for (u, v, t), r in self.reservation_table.edge_reservations.items()
-            if r == robot_id and t >= from_time
-        ]
-        for k in e_to_del:
-            del self.reservation_table.edge_reservations[k]
+        self.reservation_table.release_future_reservations(robot_id, from_time=from_time)

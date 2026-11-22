@@ -6,6 +6,7 @@ from core.grid import WarehouseGrid
 from core.reservation import ReservationTable
 from core.planner import SpaceTimeAStarPlanner
 from core.conflict import MultiRobotConflictDetector, ConflictReport, ConflictType
+from core.priority import PriorityPlanner, PriorityManager, PriorityScheme
 
 # Backward-compatibility alias
 Conflict = ConflictReport
@@ -16,6 +17,9 @@ __all__ = [
     "ConflictReport",
     "ConflictType",
     "MultiRobotConflictDetector",
+    "PriorityPlanner",
+    "PriorityManager",
+    "PriorityScheme",
 ]
 
 
@@ -25,6 +29,7 @@ class MultiAgentPlanner:
         self.reservation_table = ReservationTable()
         self.planner = SpaceTimeAStarPlanner(grid, self.reservation_table)
         self.detector = MultiRobotConflictDetector(warehouse=grid)
+        self.priority_planner = PriorityPlanner(warehouse=grid, reservation_table=self.reservation_table)
 
     @staticmethod
     def detect_conflicts(
@@ -44,44 +49,19 @@ class MultiAgentPlanner:
         agents: List[Dict[str, any]],
         start_time: int = 0,
         priorities: Optional[List[int]] = None,
-    ) -> Tuple[Dict[int, List[Tuple[int, int]]], bool]:
+    ) -> Tuple[Dict[int, Any], bool]:
         """
         Computes collision-free paths for multiple agents using Prioritized Space-Time A*.
         
         agents: List of dicts with keys: 'id', 'start', 'goal'
         Returns:
-            paths: Dict of robot_id -> path
+            paths: Dict of robot_id -> path / trajectory
             success: True if all robots found a valid collision-free path
         """
-        self.reservation_table.clear()
-        paths: Dict[int, List[Tuple[int, int]]] = {}
-
-        # Default ordering: given priority list or sequential
-        if priorities is None:
-            ordered_agents = agents
-        else:
-            p_map = {r_id: idx for idx, r_id in enumerate(priorities)}
-            ordered_agents = sorted(agents, key=lambda a: p_map.get(a['id'], 999))
-
-        all_success = True
-        for agent in ordered_agents:
-            r_id = agent['id']
-            start = agent['start']
-            goal = agent['goal']
-
-            # Plan trajectory respecting reservations made by higher-priority agents
-            path = self.planner.plan(
-                start=start,
-                goal=goal,
-                start_time=start_time,
-                robot_id=r_id,
-            )
-
-            if path is None:
-                all_success = False
-                paths[r_id] = [start]  # Hold start as fallback
-            else:
-                paths[r_id] = path
-                self.reservation_table.reserve_path(path, robot_id=r_id, start_time=start_time)
-
+        paths, all_success, _ = self.priority_planner.plan_sequential(
+            agents=agents,
+            start_time=start_time,
+            priorities=priorities,
+            clear_table=True,
+        )
         return paths, all_success
