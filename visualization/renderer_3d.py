@@ -14,6 +14,29 @@ PRIORITY_COLORS = {
     4: "#E74C3C",  # Urgent (Red)
 }
 
+CAMERA_PRESETS = {
+    'iso': dict(
+        eye=dict(x=1.35, y=-1.45, z=1.35),
+        up=dict(x=0, y=0, z=1),
+        center=dict(x=0, y=0, z=-0.1),
+    ),
+    'top': dict(
+        eye=dict(x=0.001, y=-0.001, z=2.45),
+        up=dict(x=0, y=1, z=0),
+        center=dict(x=0, y=0, z=0),
+    ),
+    'front': dict(
+        eye=dict(x=0.001, y=-2.4, z=0.55),
+        up=dict(x=0, y=0, z=1),
+        center=dict(x=0, y=0, z=0),
+    ),
+    'side': dict(
+        eye=dict(x=2.4, y=0.001, z=0.55),
+        up=dict(x=0, y=0, z=1),
+        center=dict(x=0, y=0, z=0),
+    ),
+}
+
 
 class Warehouse3DRenderer:
     """Renders an interactive 3D digital-twin of the warehouse using Plotly 3D."""
@@ -68,46 +91,67 @@ class Warehouse3DRenderer:
         deadlock_cycles: Optional[List[List[int]]] = None,
         updated_paths: Optional[Dict[int, List[Tuple[int, int]]]] = None,
         height: int = 700,
+        camera_view: str = 'iso',
+        theme: str = 'dark',
+        congestion_heatmap: Optional[Dict[Tuple[int, int], float]] = None,
+        shelf_optimizations: Optional[List[Dict[str, Any]]] = None,
+        selected_robot_id: Optional[int] = None,
+        show_trails: bool = True,
+        show_paths: bool = True,
+        show_beacons: bool = True,
+        show_heatmaps: bool = True,
+        show_labels: bool = True,
+        show_grid: bool = True,
     ) -> go.Figure:
         """
         Generates interactive 3D digital-twin containing warehouse layout, perimeter walls,
-        active task pickup/delivery beacons, mission rays, robot telemetry, and deadlock alerts.
+        active task pickup/delivery beacons, mission rays, robot telemetry, deadlock alerts,
+        congestion heatmap overlays, and shelf optimization recommendations.
         """
         fig = go.Figure()
         w, h = self.grid.width, self.grid.height
+
+        is_dark = (theme == 'dark')
+        floor_color = [[0, "#0F172A"], [1, "#1E293B"]] if is_dark else [[0, "#F2F4F4"], [1, "#E5E8E8"]]
+        grid_color = "#334155" if is_dark else "#BDC3C7"
+        wall_color = "#0284C7" if is_dark else "#7F8C8D"
+        shelf_color = "#1E293B" if is_dark else "#2C3E50"
+        bg_color = "rgba(10,22,40,1.0)" if is_dark else "#F8F9FA"
+        axis_font_color = "#94A3B8" if is_dark else "#2C3E50"
 
         # 1. Warehouse Floor Grid Surface
         fig.add_trace(go.Surface(
             x=[[-0.5, w - 0.5], [-0.5, w - 0.5]],
             y=[[-0.5, -0.5], [h - 0.5, h - 0.5]],
             z=[[0, 0], [0, 0]],
-            colorscale=[[0, "#F2F4F4"], [1, "#E5E8E8"]],
+            colorscale=floor_color,
             showscale=False,
-            opacity=0.95,
+            opacity=0.98 if is_dark else 0.95,
             name="Floor",
             hoverinfo="skip",
         ))
 
         # Floor gridlines
-        grid_lines_x, grid_lines_y, grid_lines_z = [], [], []
-        for x in range(w + 1):
-            grid_lines_x.extend([x - 0.5, x - 0.5, None])
-            grid_lines_y.extend([-0.5, h - 0.5, None])
-            grid_lines_z.extend([0.005, 0.005, None])
-        for y in range(h + 1):
-            grid_lines_x.extend([-0.5, w - 0.5, None])
-            grid_lines_y.extend([y - 0.5, y - 0.5, None])
-            grid_lines_z.extend([0.005, 0.005, None])
+        if show_grid:
+            grid_lines_x, grid_lines_y, grid_lines_z = [], [], []
+            for x in range(w + 1):
+                grid_lines_x.extend([x - 0.5, x - 0.5, None])
+                grid_lines_y.extend([-0.5, h - 0.5, None])
+                grid_lines_z.extend([0.005, 0.005, None])
+            for y in range(h + 1):
+                grid_lines_x.extend([-0.5, w - 0.5, None])
+                grid_lines_y.extend([y - 0.5, y - 0.5, None])
+                grid_lines_z.extend([0.005, 0.005, None])
 
-        fig.add_trace(go.Scatter3d(
-            x=grid_lines_x,
-            y=grid_lines_y,
-            z=grid_lines_z,
-            mode='lines',
-            line=dict(color='#BDC3C7', width=1.5),
-            hoverinfo='skip',
-            showlegend=False,
-        ))
+            fig.add_trace(go.Scatter3d(
+                x=grid_lines_x,
+                y=grid_lines_y,
+                z=grid_lines_z,
+                mode='lines',
+                line=dict(color=grid_color, width=1.5),
+                hoverinfo='skip',
+                showlegend=False,
+            ))
 
         # 1b. Perimeter Boundary Walls
         wall_x = [-0.5, w - 0.5, w - 0.5, -0.5, -0.5]
@@ -119,11 +163,44 @@ class Warehouse3DRenderer:
             y=wall_y,
             z=wall_z_top,
             mode='lines',
-            line=dict(color='#7F8C8D', width=3),
+            line=dict(color=wall_color, width=3.5 if is_dark else 3),
             name="Perimeter Wall",
             showlegend=False,
             hoverinfo='skip',
         ))
+
+        # 1c. Congestion Heatmap Floor Overlay (Module 10)
+        if show_heatmaps and congestion_heatmap:
+            heat_x, heat_y, heat_z, heat_c, heat_text = [], [], [], [], []
+            for (cx, cy), c_val in congestion_heatmap.items():
+                if c_val > 0.05:
+                    heat_x.append(cx)
+                    heat_y.append(cy)
+                    heat_z.append(0.012)
+                    heat_c.append(c_val)
+                    severity = "Critical" if c_val >= 0.75 else "High" if c_val >= 0.5 else "Moderate"
+                    heat_text.append(f"Congestion: {c_val:.2f} ({severity})")
+
+            if heat_x:
+                fig.add_trace(go.Scatter3d(
+                    x=heat_x,
+                    y=heat_y,
+                    z=heat_z,
+                    mode='markers',
+                    marker=dict(
+                        symbol='square',
+                        size=15,
+                        color=heat_c,
+                        colorscale='YlOrRd',
+                        cmin=0.0,
+                        cmax=1.0,
+                        opacity=0.65,
+                        showscale=False,
+                    ),
+                    text=heat_text,
+                    hoverinfo='text',
+                    name="Congestion Heatmap",
+                ))
 
         # 2. Charging Docks (Green pads)
         dock_x = [d[0] for d in self.grid.charging_docks]
@@ -133,11 +210,11 @@ class Warehouse3DRenderer:
             x=dock_x,
             y=dock_y,
             z=dock_z,
-            mode='markers+text',
-            marker=dict(symbol='square', size=14, color='#2ECC71', line=dict(color='#27AE60', width=2)),
+            mode='markers+text' if show_labels else 'markers',
+            marker=dict(symbol='square', size=14, color='#10B981', line=dict(color='#059669', width=2)),
             text=[f"Dock {i+1}" for i in range(len(dock_x))],
             textposition='top center',
-            textfont=dict(size=9, color='#1E8449'),
+            textfont=dict(size=9, color='#10B981' if is_dark else '#1E8449'),
             name="Charging Docks",
         ))
 
@@ -149,11 +226,11 @@ class Warehouse3DRenderer:
             x=pack_x,
             y=pack_y,
             z=pack_z,
-            mode='markers+text',
-            marker=dict(symbol='square', size=14, color='#F39C12', line=dict(color='#D35400', width=2)),
+            mode='markers+text' if show_labels else 'markers',
+            marker=dict(symbol='square', size=14, color='#F59E0B', line=dict(color='#D97706', width=2)),
             text=[f"Pack {i+1}" for i in range(len(pack_x))],
             textposition='bottom center',
-            textfont=dict(size=9, color='#B9770E'),
+            textfont=dict(size=9, color='#F59E0B' if is_dark else '#B9770E'),
             name="Packing Stations",
         ))
 
@@ -166,10 +243,35 @@ class Warehouse3DRenderer:
                 z_max=1.2,
                 dx=0.82,
                 dy=0.82,
-                color="#2C3E50",
+                color=shelf_color,
                 name="Shelf Rack",
             )
             fig.add_trace(shelf_mesh)
+
+        # 4b. Shelf Relocation Recommendations (Module 10)
+        if shelf_optimizations:
+            opt_x, opt_y, opt_z, opt_text = [], [], [], []
+            for rec in shelf_optimizations:
+                s_pos = rec.get('shelf')
+                if s_pos:
+                    opt_x.append(s_pos[0])
+                    opt_y.append(s_pos[1])
+                    opt_z.append(1.35)
+                    tgt = rec.get('target_swap', '')
+                    opt_text.append(f"🔄 SWAP -> {tgt}")
+
+            if opt_x:
+                fig.add_trace(go.Scatter3d(
+                    x=opt_x,
+                    y=opt_y,
+                    z=opt_z,
+                    mode='markers+text',
+                    marker=dict(size=9, color='#F59E0B', symbol='diamond'),
+                    text=opt_text,
+                    textposition='top center',
+                    textfont=dict(size=8, color='#FBBF24', family='Arial Bold'),
+                    name="Shelf Relocation Advisory",
+                ))
 
         # 5. Dynamic Obstacles (Hazard Red 3D Blocks)
         for ox, oy in self.grid.dynamic_obstacles:
@@ -180,7 +282,7 @@ class Warehouse3DRenderer:
                 z_max=0.9,
                 dx=0.86,
                 dy=0.86,
-                color="#E74C3C",
+                color="#EF4444",
                 name="Dynamic Obstacle",
             )
             fig.add_trace(obs_mesh)
@@ -189,14 +291,14 @@ class Warehouse3DRenderer:
         fig.add_trace(go.Scatter3d(
             x=[None], y=[None], z=[None],
             mode='markers',
-            marker=dict(size=10, color='#2C3E50', symbol='square'),
+            marker=dict(size=10, color=shelf_color, symbol='square'),
             name="Shelf Racks (3D)",
         ))
         if self.grid.dynamic_obstacles:
             fig.add_trace(go.Scatter3d(
                 x=[None], y=[None], z=[None],
                 mode='markers',
-                marker=dict(size=10, color='#E74C3C', symbol='square'),
+                marker=dict(size=10, color='#EF4444', symbol='square'),
                 name="Dynamic Obstacles",
             ))
 
@@ -208,10 +310,10 @@ class Warehouse3DRenderer:
                 y=obs_y,
                 z=obs_z,
                 mode='markers+text',
-                marker=dict(size=12, color='#E74C3C', symbol='diamond'),
+                marker=dict(size=12, color='#EF4444', symbol='diamond'),
                 text=["⚠️ OBSTACLE"] * len(obs_x),
                 textposition='top center',
-                textfont=dict(size=9, color='#C0392B', family='Arial Black'),
+                textfont=dict(size=9, color='#EF4444', family='Arial Black'),
                 name="Obstacle Alert",
                 showlegend=False,
             ))
@@ -222,45 +324,46 @@ class Warehouse3DRenderer:
             for c in deadlock_cycles:
                 deadlocked_robot_ids.update(c)
 
-        # 6. Task Mission Beacons & Connecting Mission Rays (Module 9)
-        for r_id, robot in robots.items():
-            if robot.assigned_task:
-                task = robot.assigned_task
-                p_color = PRIORITY_COLORS.get(int(getattr(task, 'priority', 2)), "#3498DB")
+        # 6. Task Mission Beacons & Connecting Mission Rays
+        if show_beacons:
+            for r_id, robot in robots.items():
+                if robot.assigned_task:
+                    task = robot.assigned_task
+                    p_color = PRIORITY_COLORS.get(int(getattr(task, 'priority', 2)), "#3498DB")
 
-                # Pickup spot beacon
-                fig.add_trace(go.Scatter3d(
-                    x=[task.pick_spot[0]],
-                    y=[task.pick_spot[1]],
-                    z=[0.25],
-                    mode='markers+text',
-                    marker=dict(size=10, color=p_color, symbol='diamond-open', line=dict(color=p_color, width=2.5)),
-                    text=[f"Pick T#{task.task_id}"],
-                    textposition='top center',
-                    textfont=dict(size=8, color=p_color, family='Arial Bold'),
-                    name=f"Pick T#{task.task_id}",
-                    showlegend=False,
-                ))
+                    # Pickup spot beacon
+                    fig.add_trace(go.Scatter3d(
+                        x=[task.pick_spot[0]],
+                        y=[task.pick_spot[1]],
+                        z=[0.25],
+                        mode='markers+text' if show_labels else 'markers',
+                        marker=dict(size=10, color=p_color, symbol='diamond-open', line=dict(color=p_color, width=2.5)),
+                        text=[f"Pick T#{task.task_id}"],
+                        textposition='top center',
+                        textfont=dict(size=8, color=p_color, family='Arial Bold'),
+                        name=f"Pick T#{task.task_id}",
+                        showlegend=False,
+                    ))
 
-                # Mission ray: connecting robot to current mission target
-                target_pos = task.pick_spot if robot.state in ('MOVING_TO_PICK', 'PICKING') else task.delivery_station
-                fig.add_trace(go.Scatter3d(
-                    x=[robot.pos[0], target_pos[0]],
-                    y=[robot.pos[1], target_pos[1]],
-                    z=[0.30, 0.30],
-                    mode='lines',
-                    line=dict(color=p_color, width=2, dash='dashdot'),
-                    name=f"Task T#{task.task_id} Ray",
-                    hoverinfo='name',
-                    showlegend=False,
-                ))
+                    # Mission ray: connecting robot to current mission target
+                    target_pos = task.pick_spot if robot.state in ('MOVING_TO_PICK', 'PICKING') else task.delivery_station
+                    fig.add_trace(go.Scatter3d(
+                        x=[robot.pos[0], target_pos[0]],
+                        y=[robot.pos[1], target_pos[1]],
+                        z=[0.30, 0.30],
+                        mode='lines',
+                        line=dict(color=p_color, width=2, dash='dashdot'),
+                        name=f"Task T#{task.task_id} Ray",
+                        hoverinfo='name',
+                        showlegend=False,
+                    ))
 
         # 7. Planned Paths and Recent Movement Trails
         for r_id, robot in robots.items():
             color = ROBOT_COLORS.get(r_id, '#7F8C8D')
 
             # Recent trail trace
-            if robot.trail and len(robot.trail) > 1:
+            if show_trails and robot.trail and len(robot.trail) > 1:
                 tx = [p[0] for p in robot.trail]
                 ty = [p[1] for p in robot.trail]
                 tz = [0.04] * len(tx)
@@ -276,7 +379,7 @@ class Warehouse3DRenderer:
                 ))
 
             # Active remaining planned path
-            if robot.path and len(robot.path) > 1:
+            if show_paths and robot.path and len(robot.path) > 1:
                 rem_path = robot.path[robot.path_index:]
                 px = [p[0] for p in rem_path]
                 py = [p[1] for p in rem_path]
@@ -330,9 +433,9 @@ class Warehouse3DRenderer:
         for r_id, robot in sorted(robots.items()):
             base_color = ROBOT_COLORS.get(r_id, '#3498DB')
             if robot.state in ('PICKING', 'DELIVERING'):
-                status_color = '#F39C12'
+                status_color = '#F59E0B'
             elif robot.state == 'IDLE':
-                status_color = '#95A5A6'
+                status_color = '#94A3B8'
             else:
                 status_color = base_color
 
@@ -375,6 +478,22 @@ class Warehouse3DRenderer:
             name="Robot Fleet",
         ))
 
+        # 8b. Selected Robot Highlight Beacon (Module 10)
+        if selected_robot_id and selected_robot_id in robots:
+            sel_r = robots[selected_robot_id]
+            fig.add_trace(go.Scatter3d(
+                x=[sel_r.pos[0]],
+                y=[sel_r.pos[1]],
+                z=[0.75],
+                mode='markers+text',
+                marker=dict(size=14, color='#00F0FF', symbol='diamond'),
+                text=[f"🎯 R{selected_robot_id}"],
+                textposition='top center',
+                textfont=dict(color='#00F0FF', size=10, family='Arial Bold'),
+                name=f"Selected Robot R{selected_robot_id}",
+                showlegend=False,
+            ))
+
         # 9. Deadlock Warning Indicators
         if deadlocked_robot_ids:
             dl_x, dl_y, dl_z, dl_text = [], [], [], []
@@ -391,55 +510,58 @@ class Warehouse3DRenderer:
                 y=dl_y,
                 z=dl_z,
                 mode='markers+text',
-                marker=dict(size=14, color='#E74C3C', symbol='diamond'),
+                marker=dict(size=14, color='#EF4444', symbol='diamond'),
                 text=dl_text,
                 textposition='top center',
-                textfont=dict(color='#E74C3C', size=11, family='Arial Black'),
+                textfont=dict(color='#EF4444', size=11, family='Arial Black'),
                 name="Deadlock Warning",
             ))
 
-        # Scene camera and axes layout
+        # Camera layout
+        cam_setting = CAMERA_PRESETS.get(camera_view, CAMERA_PRESETS['iso'])
+
         fig.update_layout(
             title=dict(
                 text=f"<b>SmartWarehouse 3D Digital Twin</b> — Step: {step_count}",
                 x=0.05,
                 y=0.96,
-                font=dict(size=16, color='#2C3E50'),
+                font=dict(size=16, color=axis_font_color),
             ),
+            paper_bgcolor=bg_color,
+            plot_bgcolor=bg_color,
             height=height,
             margin=dict(l=0, r=0, t=40, b=0),
             scene=dict(
                 xaxis=dict(
                     title="X (m)",
                     range=[-0.5, w - 0.5],
-                    backgroundcolor="#F8F9FA",
-                    gridcolor="#BDC3C7",
+                    backgroundcolor=bg_color,
+                    gridcolor=grid_color,
                     showbackground=True,
                     dtick=2,
+                    color=axis_font_color,
                 ),
                 yaxis=dict(
                     title="Y (m)",
-                    range=[h - 0.5, -0.5],  # Invert so Y=0 is top
-                    backgroundcolor="#F8F9FA",
-                    gridcolor="#BDC3C7",
+                    range=[h - 0.5, -0.5],
+                    backgroundcolor=bg_color,
+                    gridcolor=grid_color,
                     showbackground=True,
                     dtick=2,
+                    color=axis_font_color,
                 ),
                 zaxis=dict(
                     title="Z (m)",
                     range=[0, 1.8],
-                    backgroundcolor="#EAEDED",
-                    gridcolor="#BDC3C7",
+                    backgroundcolor=bg_color,
+                    gridcolor=grid_color,
                     showbackground=True,
                     dtick=0.5,
+                    color=axis_font_color,
                 ),
                 aspectmode="manual",
                 aspectratio=dict(x=1.0, y=1.0, z=0.25),
-                camera=dict(
-                    eye=dict(x=1.25, y=-1.35, z=1.35),
-                    up=dict(x=0, y=0, z=1),
-                    center=dict(x=0, y=0, z=-0.1),
-                ),
+                camera=cam_setting,
             ),
             legend=dict(
                 orientation="h",
@@ -447,7 +569,7 @@ class Warehouse3DRenderer:
                 y=-0.08,
                 xanchor="center",
                 x=0.5,
-                font=dict(size=10),
+                font=dict(size=10, color=axis_font_color),
             ),
         )
 
