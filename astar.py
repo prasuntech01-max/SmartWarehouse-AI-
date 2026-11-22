@@ -5,6 +5,7 @@ import time
 from typing import List, Tuple, Optional, Dict, Any
 from warehouse import Warehouse
 from core.reservation import ReservationTable
+from core.state import Action, TimeExpandedState, Trajectory, TimeExpandedPlanner
 
 
 class PathNotFoundError(Exception):
@@ -121,89 +122,27 @@ class AStarPlanner:
         max_time: int = 200,
         hold_at_goal: int = 5,
         raise_on_failure: bool = False,
-    ) -> Optional[List[Tuple[int, int]]]:
+    ) -> Optional[Trajectory]:
         """
         Space-Time A* searching in (x, y, t) state-space.
         Supports 4-connected moves plus Wait actions, avoiding dynamic collisions
         via the reservation table.
         """
         self._validate_endpoints(start, goal)
-        start = (int(start[0]), int(start[1]))
-        goal = (int(goal[0]), int(goal[1]))
-
         if self.reservation_table is None:
             # Fallback to standard 2D A* if no reservation table is provided
             return self.plan_2d(start, goal, raise_on_failure=raise_on_failure)
 
-        # Priority queue stores: (f_score, h_score, (x, y, t))
-        open_set: List[Tuple[float, int, Tuple[int, int, int]]] = []
-        h_start = self.manhattan_distance(start, goal)
-        heapq.heappush(open_set, (float(h_start), h_start, (start[0], start[1], start_time)))
-
-        came_from: Dict[Tuple[int, int, int], Tuple[int, int, int]] = {}
-        g_score: Dict[Tuple[int, int, int], int] = {(start[0], start[1], start_time): 0}
-        closed_set = set()
-
-        while open_set:
-            current_f, current_h, current_state = heapq.heappop(open_set)
-            cx, cy, ct = current_state
-
-            if current_state in closed_set:
-                continue
-            closed_set.add(current_state)
-
-            # Reached goal
-            if (cx, cy) == goal:
-                # Ensure safety at goal for hold_at_goal timesteps
-                safe_at_goal = True
-                for dt in range(1, hold_at_goal + 1):
-                    if self.reservation_table.is_vertex_reserved(goal[0], goal[1], ct + dt, ignore_robot=robot_id):
-                        safe_at_goal = False
-                        break
-                if safe_at_goal:
-                    path: List[Tuple[int, int]] = []
-                    curr: Optional[Tuple[int, int, int]] = current_state
-                    while curr is not None:
-                        path.append((curr[0], curr[1]))
-                        curr = came_from.get(curr)
-                    path.reverse()
-                    return path
-
-            if ct >= start_time + max_time:
-                continue
-
-            current_g = g_score[current_state]
-            candidates = self.warehouse.get_neighbors(cx, cy) + [(cx, cy)]  # (cx, cy) is Wait action
-
-            for nx, ny in candidates:
-                next_t = ct + 1
-                next_state = (nx, ny, next_t)
-
-                if next_state in closed_set:
-                    continue
-
-                # Check reservation table constraints
-                if not self.reservation_table.is_action_valid(
-                    u=(cx, cy),
-                    v=(nx, ny),
-                    t=ct,
-                    ignore_robot=robot_id,
-                ):
-                    continue
-
-                tentative_g = current_g + 1
-                if next_state not in g_score or tentative_g < g_score[next_state]:
-                    came_from[next_state] = current_state
-                    g_score[next_state] = tentative_g
-                    h = self.manhattan_distance((nx, ny), goal)
-                    # Slight tie-breaker to prefer forward movement over idle waiting when costs tie
-                    wait_penalty = 0.001 if (nx, ny) == (cx, cy) else 0.0
-                    f = tentative_g + h + wait_penalty
-                    heapq.heappush(open_set, (f, h, next_state))
-
-        if raise_on_failure:
-            raise PathNotFoundError(f"Space-Time search could not find collision-free path between {start} and {goal}")
-        return None
+        te_planner = TimeExpandedPlanner(self.warehouse, self.reservation_table)
+        return te_planner.plan(
+            start=start,
+            goal=goal,
+            start_time=start_time,
+            robot_id=robot_id,
+            max_horizon=max_time,
+            hold_at_goal=hold_at_goal,
+            raise_on_failure=raise_on_failure,
+        )
 
     def plan(
         self,
@@ -237,4 +176,12 @@ class AStarPlanner:
 # Canonical alias for space-time planner
 SpaceTimeAStarPlanner = AStarPlanner
 
-__all__ = ["AStarPlanner", "SpaceTimeAStarPlanner", "PathNotFoundError"]
+__all__ = [
+    "AStarPlanner",
+    "SpaceTimeAStarPlanner",
+    "PathNotFoundError",
+    "Action",
+    "TimeExpandedState",
+    "Trajectory",
+    "TimeExpandedPlanner",
+]
