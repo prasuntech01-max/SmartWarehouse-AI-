@@ -26,6 +26,9 @@ import enum
 import math
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple, Set, Any
+from persistence.queue import WriteBehindQueue
+queue = WriteBehindQueue()
+
 
 # ---------------------------------------------------------------------------
 # Enums & data‑source handling
@@ -394,26 +397,44 @@ class HazardDetector:
                 key = (hazard_type, obs.coord)
                 if key in self._active:
                     inc = self._active[key]
-                    # Update severity if higher, and promote CANDIDATE to ACTIVE.
+                    # Update severity if higher.
                     if sev > inc.severity:
-            # Higher severity: update and set ACTIVE.
-            inc.severity = sev
-            inc.status = IncidentStatus.ACTIVE
-            inc.last_updated = tick
-            inc.current_value = obs.value
-            inc.peak_value = max(inc.peak_value, obs.value)
-            inc.explanation = self._build_explanation(obs, hazard_type, sev)
-            result.escalated.append(inc)
-        else:
-            # Same severity: promote CANDIDATE to ACTIVE and update values.
-            if inc.status == IncidentStatus.CANDIDATE:
-                inc.status = IncidentStatus.ACTIVE
-            inc.last_updated = tick
-            inc.current_value = obs.value
-            inc.peak_value = max(inc.peak_value, obs.value)
-            result.updated.append(inc)
+                        # Higher severity: update and set ACTIVE.
+                        inc.severity = sev
+                        inc.explanation = self._build_explanation(obs, hazard_type, sev)
+                        result.escalated.append(inc)
+                    else:
+                        # Same severity – possibly promote candidate.
+                        if inc.status == IncidentStatus.CANDIDATE:
+                            inc.status = IncidentStatus.ACTIVE
+                        result.updated.append(inc)
+                    # Common updates for both branches.
+                    inc.status = IncidentStatus.ACTIVE
+                    inc.last_updated = tick
+                    inc.current_value = obs.value
+                    inc.peak_value = max(inc.peak_value, obs.value)
                 else:
                     # New incident.
+                    explanation = self._build_explanation(obs, hazard_type, sev)
+                    recovery = self._build_recovery_text(hazard_type, sev)
+                    data_src = obs.data_source
+                    inc = self._make_incident(
+                        hazard_type=hazard_type,
+                        severity=sev,
+                        status=IncidentStatus.ACTIVE,
+                        source_sensor_ids=[obs.sensor_id],
+                        device_id=obs.device_id,
+                        coord=obs.coord,
+                        current_value=obs.value,
+                        unit=obs.unit,
+                        tick=tick,
+                        rule_id=hazard_type.value,
+                        explanation=explanation,
+                        recovery_explanation=recovery,
+                        data_source=data_src,
+                    )
+                    self._active[key] = inc
+                    result.new.append(inc)
                     explanation = self._build_explanation(obs, hazard_type, sev)
                     recovery = self._build_recovery_text(hazard_type, sev)
                     data_src = obs.data_source
@@ -552,7 +573,7 @@ class HazardDetector:
                     explanation = f"Device {dev.device_id} offline since tick {dev.last_seen_tick}."
                     inc = self._make_incident(
                         hazard_type=HazardType.DEVICE_DISCONNECTION,
-                        severity=HazardSeverity.CRITICAL,
+                        severity=HazardSeverity.WARNING,
                         status=IncidentStatus.ACTIVE,
                         source_sensor_ids=[],
                         device_id=dev.device_id,
@@ -604,7 +625,7 @@ class HazardDetector:
                     )
                     inc = self._make_incident(
                         hazard_type=HazardType.SENSOR_MALFUNCTION,
-                        severity=HazardSeverity.CRITICAL,
+                        severity=HazardSeverity.WARNING,
                         status=IncidentStatus.ACTIVE,
                         source_sensor_ids=[obs.sensor_id],
                         device_id=obs.device_id,

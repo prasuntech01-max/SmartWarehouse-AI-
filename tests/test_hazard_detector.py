@@ -136,6 +136,19 @@ def test_import_guard_no_forbidden_modules(detector):
     # Ensure hazard_detector does not import simulation related modules.
     import inspect, sys
     src = inspect.getsource(sys.modules["core.hazard_detector"])
+    # Use AST to detect actual import statements rather than raw string search
+    import ast, inspect, sys
+    src = inspect.getsource(sys.modules["core.hazard_detector"])
+    tree = ast.parse(src)
+    imported_modules = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                imported_modules.add(alias.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                imported_modules.add(node.module.split(".")[0])
     forbidden = ["simulation", "planner", "reservation"]
     for f in forbidden:
-        assert f not in src, f"Forbidden import {f} found in hazard_detector"
+        assert f not in imported_modules, f"Forbidden import {f} found in hazard_detector"
+    # Ensure comments/docstrings with forbidden words are ignored (AST excludes them)

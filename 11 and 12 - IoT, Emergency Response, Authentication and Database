@@ -1,0 +1,14 @@
+.gitignore
+"11 and 12 - IoT, Emergency Response, Authentication and Database\357\200\242"
+__init__.py
+auth/__init__.py
+auth/crypto.py
+auth/models.py
+core/hazard_detector.py
+docs/MODULE12_PLAN.md
+persistence/__init__.py
+persistence/db.py
+persistence/migrations/001_init.sql
+persistence/queue.py
+persistence/repo.py
+tests/test_hazard_detector.py
