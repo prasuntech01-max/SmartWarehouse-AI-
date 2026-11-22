@@ -96,12 +96,16 @@ class Warehouse3DRenderer:
         congestion_heatmap: Optional[Dict[Tuple[int, int], float]] = None,
         shelf_optimizations: Optional[List[Dict[str, Any]]] = None,
         selected_robot_id: Optional[int] = None,
+        sensors: Optional[List[Dict[str, Any]]] = None,
+        hazard_zones: Optional[List[Dict[str, Any]]] = None,
         show_trails: bool = True,
         show_paths: bool = True,
         show_beacons: bool = True,
         show_heatmaps: bool = True,
         show_labels: bool = True,
         show_grid: bool = True,
+        show_sensors: bool = True,
+        show_hazards: bool = True,
     ) -> go.Figure:
         """
         Generates interactive 3D digital-twin containing warehouse layout, perimeter walls,
@@ -154,6 +158,74 @@ class Warehouse3DRenderer:
             ))
 
         # 1b. Perimeter Boundary Walls
+        wall_x = [-0.5, w - 0.5, w - 0.5, -0.5, -0.5]
+        wall_y = [-0.5, -0.5, h - 0.5, h - 0.5, -0.5]
+        wall_z_top = [0.45] * 5
+        fig.add_trace(go.Scatter3d(
+            x=wall_x,
+            y=wall_y,
+            z=wall_z_top,
+            mode='lines',
+            line=dict(color=wall_color, width=3.5 if is_dark else 3),
+            name="Perimeter Wall",
+            showlegend=False,
+            hoverinfo='skip',
+        ))
+
+        # 1c. Structural Columns (steel supports) placed every 5 cells
+        col_spacing = 5
+        col_dx, col_dy = 0.3, 0.3
+        col_height = 1.5
+        col_i, col_j, col_k = [7,0,0,0,4,4,6,6,4,0,3,2], [3,4,1,2,5,6,5,2,0,1,6,3], [0,7,2,3,6,7,1,1,5,5,7,6]
+        col_vx, col_vy, col_vz = [], [], []
+        for cx in range(0, w, col_spacing):
+            for cy in range(0, h, col_spacing):
+                x0, x1 = cx - col_dx/2, cx + col_dx/2
+                y0, y1 = cy - col_dy/2, cy + col_dy/2
+                col_vx.extend([x0, x1, x1, x0, x0, x1, x1, x0])
+                col_vy.extend([y0, y0, y1, y1, y0, y0, y1, y1])
+                col_vz.extend([0,0,0,0,col_height,col_height,col_height,col_height])
+        if col_vx:
+            offset = 0
+            col_i_full = [idx + offset for idx in col_i]
+            col_j_full = [idx + offset for idx in col_j]
+            col_k_full = [idx + offset for idx in col_k]
+            fig.add_trace(go.Mesh3d(
+                x=col_vx,
+                y=col_vy,
+                z=col_vz,
+                i=col_i_full,
+                j=col_j_full,
+                k=col_k_full,
+                color="#777777",
+                opacity=0.9,
+                flatshading=True,
+                name="Structural Columns",
+                showlegend=False,
+                hoverinfo='skip',
+            ))
+
+        # 1d. Roof Trusses (simple grid lines at ceiling height)
+        truss_z = col_height + 0.2
+        truss_x, truss_y, truss_z_vals = [], [], []
+        for tx in range(0, w):
+            truss_x.extend([tx-0.5, tx-0.5, None])
+            truss_y.extend([-0.5, h-0.5, None])
+            truss_z_vals.extend([truss_z, truss_z, None])
+        for ty in range(0, h):
+            truss_x.extend([-0.5, w-0.5, None])
+            truss_y.extend([ty-0.5, ty-0.5, None])
+            truss_z_vals.extend([truss_z, truss_z, None])
+        fig.add_trace(go.Scatter3d(
+            x=truss_x,
+            y=truss_y,
+            z=truss_z_vals,
+            mode='lines',
+            line=dict(color='#555555', width=1.5),
+            name='Roof Trusses',
+            hoverinfo='skip',
+            showlegend=False,
+        ))
         wall_x = [-0.5, w - 0.5, w - 0.5, -0.5, -0.5]
         wall_y = [-0.5, -0.5, h - 0.5, h - 0.5, -0.5]
         wall_z_top = [0.45] * 5
@@ -235,18 +307,41 @@ class Warehouse3DRenderer:
         ))
 
         # 4. Storage Shelves (3D Racks)
-        for sx, sy in self.grid.shelves:
-            shelf_mesh = self._create_cuboid_traces(
-                x=sx,
-                y=sy,
-                z_min=0.0,
-                z_max=1.2,
-                dx=0.82,
-                dy=0.82,
+        if self.grid.shelves:
+            # Batch all shelves into a single combined Mesh3d trace to conserve trace budget (<= 40 traces)
+            shelf_cuboids = [(sx, sy, 0.0, 1.2) for sx, sy in self.grid.shelves]
+            shelf_vx, shelf_vy, shelf_vz = [], [], []
+            shelf_i, shelf_j, shelf_k = [], [], []
+            base_i = [7, 0, 0, 0, 4, 4, 6, 6, 4, 0, 3, 2]
+            base_j = [3, 4, 1, 2, 5, 6, 5, 2, 0, 1, 6, 3]
+            base_k = [0, 7, 2, 3, 6, 7, 1, 1, 5, 5, 7, 6]
+            dx, dy = 0.82, 0.82
+
+            for s_idx, (sx, sy, z_min, z_max) in enumerate(shelf_cuboids):
+                x0, x1 = sx - dx / 2, sx + dx / 2
+                y0, y1 = sy - dy / 2, sy + dy / 2
+                shelf_vx.extend([x0, x1, x1, x0, x0, x1, x1, x0])
+                shelf_vy.extend([y0, y0, y1, y1, y0, y0, y1, y1])
+                shelf_vz.extend([z_min, z_min, z_min, z_min, z_max, z_max, z_max, z_max])
+                offset = s_idx * 8
+                shelf_i.extend([idx_val + offset for idx_val in base_i])
+                shelf_j.extend([idx_val + offset for idx_val in base_j])
+                shelf_k.extend([idx_val + offset for idx_val in base_k])
+
+            fig.add_trace(go.Mesh3d(
+                x=shelf_vx,
+                y=shelf_vy,
+                z=shelf_vz,
+                i=shelf_i,
+                j=shelf_j,
+                k=shelf_k,
                 color=shelf_color,
-                name="Shelf Rack",
-            )
-            fig.add_trace(shelf_mesh)
+                opacity=0.92,
+                flatshading=True,
+                name="Shelf Racks (3D)",
+                showlegend=False,
+                hoverinfo="name",
+            ))
 
         # 4b. Shelf Relocation Recommendations (Module 10)
         if shelf_optimizations:
@@ -424,7 +519,22 @@ class Warehouse3DRenderer:
                     showlegend=False,
                 ))
 
-        # 8. Robots (3D Mobile Units) with Direction Cues and Telemetry
+        # Robot base chassis (simple rectangular cuboid)
+        chassis_dx, chassis_dy, chassis_dz = 0.6, 0.6, 0.2
+        for r_id, robot in robots.items():
+            base_mesh = self._create_cuboid_traces(
+                x=robot.pos[0],
+                y=robot.pos[1],
+                z_min=0.04,
+                z_max=0.04 + chassis_dz,
+                dx=chassis_dx,
+                dy=chassis_dy,
+                color='#111111',
+                opacity=0.9,
+                name=f"RobotBase R{r_id}",
+            )
+            fig.add_trace(base_mesh)
+
         rx, ry, rz = [], [], []
         r_colors = []
         r_labels = []
@@ -478,6 +588,98 @@ class Warehouse3DRenderer:
             name="Robot Fleet",
         ))
 
+        # 8b. AMR Base Status Halo Rings (Industrial LED Ground Ring)
+        if robots:
+            halo_x, halo_y, halo_z = [], [], []
+            halo_colors = []
+            for r_id, robot in sorted(robots.items()):
+                halo_x.append(robot.pos[0])
+                halo_y.append(robot.pos[1])
+                halo_z.append(0.04)
+                if deadlocked_robot_ids and r_id in deadlocked_robot_ids:
+                    h_col = "#EF4444"
+                elif getattr(robot, "battery", 100.0) < 20.0:
+                    h_col = "#EF4444"
+                elif robot.state in ("PICKING", "DELIVERING"):
+                    h_col = "#F59E0B"
+                elif robot.state in ("MOVING_TO_PICK", "MOVING_TO_DELIVERY"):
+                    h_col = "#00F0FF"
+                else:
+                    h_col = "#10B981"
+                halo_colors.append(h_col)
+
+            fig.add_trace(go.Scatter3d(
+                x=halo_x,
+                y=halo_y,
+                z=halo_z,
+                mode='markers',
+                marker=dict(
+                    size=22,
+                    color=halo_colors,
+                    symbol='circle-open',
+                    line=dict(width=3, color=halo_colors),
+                ),
+                name="AMR Status Halo",
+                hoverinfo='skip',
+                showlegend=False,
+            ))
+
+            # 8c. AMR Top LiDAR Sensor Turrets
+            turret_x = [robot.pos[0] for robot in robots.values()]
+            turret_y = [robot.pos[1] for robot in robots.values()]
+            turret_z = [0.52] * len(turret_x)
+            fig.add_trace(go.Scatter3d(
+                x=turret_x,
+                y=turret_y,
+                z=turret_z,
+                mode='markers',
+                marker=dict(
+                    size=7,
+                    color="#0F172A",
+                    symbol='circle',
+                    line=dict(color="#00F0FF", width=2),
+                ),
+                name="AMR LiDAR Turrets",
+                hoverinfo='skip',
+                showlegend=False,
+            ))
+
+            # 8d. AMR Heading Orientation Vectors
+            head_x, head_y, head_z = [], [], []
+            tip_x, tip_y, tip_z = [], [], []
+            for r_id, robot in sorted(robots.items()):
+                if robot.path and robot.path_index < len(robot.path) - 1:
+                    nx, ny = robot.path[robot.path_index + 1]
+                    dx, dy = nx - robot.pos[0], ny - robot.pos[1]
+                    head_x.extend([robot.pos[0], robot.pos[0] + 0.42 * dx, None])
+                    head_y.extend([robot.pos[1], robot.pos[1] + 0.42 * dy, None])
+                    head_z.extend([0.35, 0.35, None])
+                    tip_x.append(robot.pos[0] + 0.42 * dx)
+                    tip_y.append(robot.pos[1] + 0.42 * dy)
+                    tip_z.append(0.35)
+
+            if head_x:
+                fig.add_trace(go.Scatter3d(
+                    x=head_x,
+                    y=head_y,
+                    z=head_z,
+                    mode='lines',
+                    line=dict(color="#00F0FF", width=3),
+                    hoverinfo='skip',
+                    name="AMR Heading Vectors",
+                    showlegend=False,
+                ))
+                fig.add_trace(go.Scatter3d(
+                    x=tip_x,
+                    y=tip_y,
+                    z=tip_z,
+                    mode='markers',
+                    marker=dict(size=5, color="#00F0FF", symbol='diamond'),
+                    hoverinfo='skip',
+                    name="AMR Heading Pointer",
+                    showlegend=False,
+                ))
+
         # 8b. Selected Robot Highlight Beacon (Module 10)
         if selected_robot_id and selected_robot_id in robots:
             sel_r = robots[selected_robot_id]
@@ -516,6 +718,68 @@ class Warehouse3DRenderer:
                 textfont=dict(color='#EF4444', size=11, family='Arial Black'),
                 name="Deadlock Warning",
             ))
+
+        # 10. Industrial IoT Sensor Markers (Module 11 & 13)
+        if show_sensors and sensors:
+            sx_list, sy_list, sz_list = [], [], []
+            s_colors, s_texts, s_hovers = [], [], []
+            for s in sensors:
+                pos = s.get("coord", (0, 0))
+                s_type = s.get("type", "Sensor")
+                s_val = s.get("value", 0.0)
+                s_unit = s.get("unit", "")
+                s_id = s.get("sensor_id", "s")
+                status = s.get("status", "NORMAL")
+
+                sx_list.append(pos[0])
+                sy_list.append(pos[1])
+                sz_list.append(1.4)
+                color = "#10B981" if status == "NORMAL" else "#F59E0B" if status == "WARNING" else "#EF4444"
+                s_colors.append(color)
+                s_texts.append(f"📡 {s_type}")
+                s_hovers.append(f"<b>Sensor {s_id}</b> ({s_type})<br>Location: {pos}<br>Value: {s_val} {s_unit}<br>Status: {status}")
+
+            if sx_list:
+                fig.add_trace(go.Scatter3d(
+                    x=sx_list,
+                    y=sy_list,
+                    z=sz_list,
+                    mode='markers+text' if show_labels else 'markers',
+                    marker=dict(size=8, color=s_colors, symbol='cross'),
+                    text=s_texts,
+                    textposition='top center',
+                    textfont=dict(size=8, color='#38BDF8'),
+                    hovertext=s_hovers,
+                    hoverinfo='text',
+                    name="IoT Sensors",
+                ))
+
+        # 11. Hazard Overlays (Module 11 & 13)
+        if show_hazards and hazard_zones:
+            hx_list, hy_list, hz_list = [], [], []
+            h_colors, h_texts = [], []
+            for hz in hazard_zones:
+                coord = hz.get("coord", (0, 0))
+                h_type = hz.get("type", "Hazard")
+                sev = hz.get("severity", "WARNING")
+                hx_list.append(coord[0])
+                hy_list.append(coord[1])
+                hz_list.append(0.02)
+                h_colors.append("#DC2626" if sev in ("CRITICAL", "EMERGENCY") else "#F59E0B")
+                h_texts.append(f"⚠️ {h_type} ({sev})")
+
+            if hx_list:
+                fig.add_trace(go.Scatter3d(
+                    x=hx_list,
+                    y=hy_list,
+                    z=hz_list,
+                    mode='markers+text',
+                    marker=dict(symbol='square', size=22, color=h_colors, opacity=0.7),
+                    text=h_texts,
+                    textposition='top center',
+                    textfont=dict(size=9, color='#EF4444', family='Arial Black'),
+                    name="Hazard Zones",
+                ))
 
         # Camera layout
         cam_setting = CAMERA_PRESETS.get(camera_view, CAMERA_PRESETS['iso'])

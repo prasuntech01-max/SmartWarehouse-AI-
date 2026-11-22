@@ -1,11 +1,22 @@
 import os
 import sqlite3
-import sqlite3
 import threading
+import datetime
 from typing import Generator, List, Tuple
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Register standard ISO adapters and converters for Python 3.12+ SQLite compliance
+def _adapt_datetime_iso(val: datetime.datetime) -> str:
+    return val.isoformat()
+
+def _convert_datetime_iso(val: bytes) -> datetime.datetime:
+    return datetime.datetime.fromisoformat(val.decode("utf-8"))
+
+sqlite3.register_adapter(datetime.datetime, _adapt_datetime_iso)
+sqlite3.register_converter("timestamp", _convert_datetime_iso)
+sqlite3.register_converter("TIMESTAMP", _convert_datetime_iso)
 
 DEFAULT_DB_PATH = os.getenv('SMARTWAREHOUSE_DB_PATH', os.path.join(os.getcwd(), 'data', 'smartwarehouse.db'))
 
@@ -32,6 +43,7 @@ def get_connection() -> sqlite3.Connection:
         conn.execute('PRAGMA foreign_keys = ON;')
         conn.execute('PRAGMA journal_mode = WAL;')
         conn.execute('PRAGMA busy_timeout = 5000;')
+        conn.row_factory = sqlite3.Row
         _thread_local.conn = conn
     return conn
 

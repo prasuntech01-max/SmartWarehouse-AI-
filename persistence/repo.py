@@ -224,3 +224,205 @@ class IncidentRepo:
         )
         rows = cur.fetchall()
         return [_row_to_incident(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Module 13: Benchmark Repository
+# ---------------------------------------------------------------------------
+
+class BenchmarkRepo:
+    MAX_RETENTION = 50
+
+    @staticmethod
+    def save_run(
+        run_id: str,
+        benchmark_name: str,
+        parameters: dict,
+        environment: dict,
+        total_trials: int,
+        executed_by: str,
+        trials: List[dict],
+    ) -> None:
+        conn = get_connection()
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                """INSERT INTO benchmark_runs 
+                   (run_id, benchmark_name, parameters_json, environment_json, total_trials, executed_by)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    run_id,
+                    benchmark_name,
+                    json.dumps(parameters),
+                    json.dumps(environment),
+                    total_trials,
+                    executed_by,
+                ),
+            )
+            for t in trials:
+                cur.execute(
+                    """INSERT INTO benchmark_trials
+                       (run_id, algorithm_name, scenario_seed, num_robots, grid_size, obstacle_density,
+                        execution_time_ms, memory_peak_kb, path_length, optimal_path_length,
+                        optimality_ratio, conflicts_detected, replan_count, success)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        run_id,
+                        t.get("algorithm_name", ""),
+                        t.get("scenario_seed", 0),
+                        t.get("num_robots", 1),
+                        t.get("grid_size", "15x15"),
+                        float(t.get("obstacle_density", 0.0)),
+                        float(t.get("execution_time_ms", 0.0)),
+                        float(t.get("memory_peak_kb", 0.0)),
+                        int(t.get("path_length", 0)),
+                        int(t.get("optimal_path_length", 0)),
+                        float(t.get("optimality_ratio", 1.0)),
+                        int(t.get("conflicts_detected", 0)),
+                        int(t.get("replan_count", 0)),
+                        1 if t.get("success", True) else 0,
+                    ),
+                )
+            # Prune runs older than MAX_RETENTION
+            cur.execute(
+                """DELETE FROM benchmark_runs WHERE id NOT IN (
+                       SELECT id FROM benchmark_runs ORDER BY id DESC LIMIT ?
+                   )""",
+                (BenchmarkRepo.MAX_RETENTION,),
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+    @staticmethod
+    def list_runs(limit: int = 50) -> List[dict]:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT * FROM benchmark_runs ORDER BY id DESC LIMIT ?", (limit,)
+        )
+        rows = cur.fetchall()
+        result = []
+        for r in rows:
+            result.append({
+                "id": r["id"],
+                "run_id": r["run_id"],
+                "benchmark_name": r["benchmark_name"],
+                "parameters": json.loads(r["parameters_json"]) if r["parameters_json"] else {},
+                "environment": json.loads(r["environment_json"]) if r["environment_json"] else {},
+                "total_trials": r["total_trials"],
+                "executed_by": r["executed_by"],
+                "created_at": r["created_at"],
+            })
+        return result
+
+    @staticmethod
+    def get_run(run_id: str) -> Optional[dict]:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM benchmark_runs WHERE run_id = ?", (run_id,))
+        r = cur.fetchone()
+        if not r:
+            return None
+        return {
+            "id": r["id"],
+            "run_id": r["run_id"],
+            "benchmark_name": r["benchmark_name"],
+            "parameters": json.loads(r["parameters_json"]) if r["parameters_json"] else {},
+            "environment": json.loads(r["environment_json"]) if r["environment_json"] else {},
+            "total_trials": r["total_trials"],
+            "executed_by": r["executed_by"],
+            "created_at": r["created_at"],
+        }
+
+    @staticmethod
+    def get_trials(run_id: str) -> List[dict]:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT * FROM benchmark_trials WHERE run_id = ? ORDER BY id ASC", (run_id,)
+        )
+        rows = cur.fetchall()
+        result = []
+        for r in rows:
+            result.append({
+                "id": r["id"],
+                "run_id": r["run_id"],
+                "algorithm_name": r["algorithm_name"],
+                "scenario_seed": r["scenario_seed"],
+                "num_robots": r["num_robots"],
+                "grid_size": r["grid_size"],
+                "obstacle_density": r["obstacle_density"],
+                "execution_time_ms": r["execution_time_ms"],
+                "memory_peak_kb": r["memory_peak_kb"],
+                "path_length": r["path_length"],
+                "optimal_path_length": r["optimal_path_length"],
+                "optimality_ratio": r["optimality_ratio"],
+                "conflicts_detected": r["conflicts_detected"],
+                "replan_count": r["replan_count"],
+                "success": bool(r["success"]),
+            })
+        return result
+
+
+# ---------------------------------------------------------------------------
+# Module 13: Report Repository
+# ---------------------------------------------------------------------------
+
+class ReportRepo:
+    @staticmethod
+    def save_report(
+        report_id: str,
+        title: str,
+        generated_by: str,
+        time_range_start: Optional[datetime.datetime],
+        time_range_end: Optional[datetime.datetime],
+        summary: dict,
+        export_format: str,
+    ) -> None:
+        conn = get_connection()
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                """INSERT INTO report_records
+                   (report_id, title, generated_by, time_range_start, time_range_end, summary_json, export_format)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    report_id,
+                    title,
+                    generated_by,
+                    time_range_start,
+                    time_range_end,
+                    json.dumps(summary),
+                    export_format,
+                ),
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+    @staticmethod
+    def list_reports(limit: int = 50) -> List[dict]:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT * FROM report_records ORDER BY id DESC LIMIT ?", (limit,)
+        )
+        rows = cur.fetchall()
+        result = []
+        for r in rows:
+            result.append({
+                "id": r["id"],
+                "report_id": r["report_id"],
+                "title": r["title"],
+                "generated_by": r["generated_by"],
+                "time_range_start": r["time_range_start"],
+                "time_range_end": r["time_range_end"],
+                "summary": json.loads(r["summary_json"]) if r["summary_json"] else {},
+                "export_format": r["export_format"],
+                "created_at": r["created_at"],
+            })
+        return result
+

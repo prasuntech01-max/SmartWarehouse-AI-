@@ -35,6 +35,7 @@ queue = WriteBehindQueue()
 # ---------------------------------------------------------------------------
 
 class HazardType(str, enum.Enum):
+    
     FIRE = "FIRE"
     SMOKE_ACCUMULATION = "SMOKE_ACCUMULATION"
     GAS_LEAKAGE = "GAS_LEAKAGE"
