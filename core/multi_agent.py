@@ -1,19 +1,22 @@
 """Multi-Agent Prioritized Planning and Collision Detection."""
 
-from typing import Dict, List, Tuple, Optional, NamedTuple
+from typing import Dict, List, Tuple, Optional, Any
 import time
 from core.grid import WarehouseGrid
 from core.reservation import ReservationTable
 from core.planner import SpaceTimeAStarPlanner
+from core.conflict import MultiRobotConflictDetector, ConflictReport, ConflictType
 
+# Backward-compatibility alias
+Conflict = ConflictReport
 
-class Conflict(NamedTuple):
-    conflict_type: str  # 'vertex' or 'edge'
-    robot_a: int
-    robot_b: int
-    time_step: int
-    location_a: Tuple[int, int]
-    location_b: Tuple[int, int]
+__all__ = [
+    "MultiAgentPlanner",
+    "Conflict",
+    "ConflictReport",
+    "ConflictType",
+    "MultiRobotConflictDetector",
+]
 
 
 class MultiAgentPlanner:
@@ -21,79 +24,20 @@ class MultiAgentPlanner:
         self.grid = grid
         self.reservation_table = ReservationTable()
         self.planner = SpaceTimeAStarPlanner(grid, self.reservation_table)
+        self.detector = MultiRobotConflictDetector(warehouse=grid)
 
     @staticmethod
-    def detect_conflicts(paths: Dict[int, List[Tuple[int, int]]], start_times: Optional[Dict[int, int]] = None) -> List[Conflict]:
+    def detect_conflicts(
+        paths: Dict[int, Any],
+        start_times: Optional[Dict[int, int]] = None,
+        warehouse: Optional[WarehouseGrid] = None,
+    ) -> List[ConflictReport]:
         """
         Exhaustively scans a dictionary of robot paths to detect any vertex or edge collisions.
         Returns a list of all detected conflicts.
         """
-        conflicts: List[Conflict] = []
-        robot_ids = list(paths.keys())
-        if not robot_ids:
-            return conflicts
-
-        if start_times is None:
-            start_times = {r_id: 0 for r_id in robot_ids}
-
-        # Determine overall time horizon
-        max_t = 0
-        expanded_paths: Dict[int, Dict[int, Tuple[int, int]]] = {}
-
-        for r_id in robot_ids:
-            r_path = paths[r_id]
-            st = start_times[r_id]
-            expanded: Dict[int, Tuple[int, int]] = {}
-            for i, pos in enumerate(r_path):
-                expanded[st + i] = pos
-            if r_path:
-                end_t = st + len(r_path) - 1
-                if end_t > max_t:
-                    max_t = end_t
-            expanded_paths[r_id] = expanded
-
-        # Check at each time step
-        for t in range(max_t + 1):
-            for i in range(len(robot_ids)):
-                r1 = robot_ids[i]
-                p1_curr = expanded_paths[r1].get(t)
-                p1_next = expanded_paths[r1].get(t + 1)
-
-                if p1_curr is None:
-                    continue
-
-                for j in range(i + 1, len(robot_ids)):
-                    r2 = robot_ids[j]
-                    p2_curr = expanded_paths[r2].get(t)
-                    p2_next = expanded_paths[r2].get(t + 1)
-
-                    if p2_curr is None:
-                        continue
-
-                    # 1. Vertex Conflict at time t
-                    if p1_curr == p2_curr:
-                        conflicts.append(Conflict(
-                            conflict_type='vertex',
-                            robot_a=r1,
-                            robot_b=r2,
-                            time_step=t,
-                            location_a=p1_curr,
-                            location_b=p2_curr,
-                        ))
-
-                    # 2. Edge/Swap Conflict at time t -> t+1
-                    if p1_next is not None and p2_next is not None:
-                        if p1_curr == p2_next and p1_next == p2_curr and p1_curr != p1_next:
-                            conflicts.append(Conflict(
-                                conflict_type='edge',
-                                robot_a=r1,
-                                robot_b=r2,
-                                time_step=t,
-                                location_a=p1_curr,
-                                location_b=p2_curr,
-                            ))
-
-        return conflicts
+        detector = MultiRobotConflictDetector(warehouse=warehouse)
+        return detector.detect_conflicts(paths, start_times=start_times)
 
     def plan_prioritized(
         self,
