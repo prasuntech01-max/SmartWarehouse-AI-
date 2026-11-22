@@ -39,7 +39,7 @@ class WarehouseSimulator:
         self.reservation_table = ReservationTable()
         self.planner = SpaceTimeAStarPlanner(self.grid, self.reservation_table)
         self.ma_planner = MultiAgentPlanner(self.grid)
-        self.deadlock_handler = DeadlockHandler(self.grid, self.planner)
+        self.deadlock_handler = DeadlockHandler(self.grid, self.reservation_table, self.planner)
         self.replanner = DynamicReplanner(self.grid, self.reservation_table)
         self.task_manager = TaskManager(self.grid, seed=self.seed)
         self.metrics = MetricsCollector()
@@ -201,6 +201,31 @@ class WarehouseSimulator:
                     robot.goal = None
                     robot.path = []
                     robot.path_index = 0
+
+        # 1.5 Deadlock detection & resolution via Wait-For Graph (WFG) analysis
+        active_states: Dict[int, Dict[str, Any]] = {}
+        for r_id, r in self.robots.items():
+            if r.path and r.goal is not None:
+                active_states[r_id] = {
+                    'pos': r.pos,
+                    'goal': r.goal,
+                    'path': r.path,
+                    'path_index': r.path_index,
+                    'is_waiting': (r.pos == r.path[r.path_index] if r.path_index < len(r.path) else True),
+                }
+
+        if len(active_states) >= 2:
+            cycles = self.deadlock_handler.detect_deadlocks(active_states, current_step)
+            for cycle in cycles:
+                resolved, new_paths, msg = self.deadlock_handler.resolve_deadlock(
+                    cycle, active_states, current_step
+                )
+                if resolved:
+                    self.metrics.record_deadlock_event()
+                    for c_id, new_traj in new_paths.items():
+                        if c_id in self.robots:
+                            self.robots[c_id].path = list(new_traj)
+                            self.robots[c_id].path_index = 0
 
         # 2. Movement execution along paths
         next_positions: Dict[int, Tuple[int, int]] = {}

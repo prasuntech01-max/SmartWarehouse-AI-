@@ -1,9 +1,10 @@
-"""SmartWarehouse AI — Interactive Streamlit Dashboard.
+"""SmartWarehouse AI — Interactive Streamlit Dashboard (2D & 3D).
 
-An autonomous warehouse robot simulator demonstrating:
-- Space-Time A* Path Planning
-- Vertex & Edge-Swap Collision Avoidance via Reservation Tables
-- Deadlock Detection and Dynamic Replanning
+An autonomous warehouse robot simulator featuring:
+- Time-Expanded State Space & Space-Time A* Planning
+- Reservation Tables for Vertex & Edge-Swap Collision Avoidance
+- Wait-For Graph (WFG) Deadlock Detection & Multi-Tier Recovery
+- Dual Visualization: 2D Floorplan (Matplotlib) & 3D Digital Twin (Plotly)
 - Task Assignment & Fleet Scalability Analysis (1 to 5 robots)
 """
 
@@ -13,11 +14,12 @@ import pandas as pd
 import time
 from simulation.engine import WarehouseSimulator
 from visualization.renderer import WarehouseRenderer, ROBOT_COLORS
+from visualization.renderer_3d import Warehouse3DRenderer
 from core.multi_agent import MultiAgentPlanner
 
 # Streamlit Page Configuration
 st.set_page_config(
-    page_title="SmartWarehouse AI — Robot Fleet Simulator",
+    page_title="SmartWarehouse AI — 3D Robot Fleet Simulator",
     page_icon="🤖",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -46,18 +48,28 @@ def get_simulator() -> WarehouseSimulator:
     if 'sim' not in st.session_state:
         st.session_state.num_robots = 3
         st.session_state.sim = WarehouseSimulator(num_robots=3, width=15, height=15)
-        st.session_state.auto_play = False
         st.session_state.last_message = "Simulator initialized with 3 robots on 15x15 grid."
     return st.session_state.sim
 
 
 sim = get_simulator()
-renderer = WarehouseRenderer(sim.grid)
+renderer_2d = WarehouseRenderer(sim.grid)
+renderer_3d = Warehouse3DRenderer(sim.grid)
 
 # ----------------- SIDEBAR CONTROLS -----------------
 with st.sidebar:
-    st.title("🤖 Fleet Control")
-    st.markdown("Configure warehouse parameters and simulation controls.")
+    st.title("🤖 Fleet & Simulation Control")
+    st.markdown("Configure warehouse parameters, view options, and controls.")
+
+    # Visualization Mode Toggle
+    view_mode = st.radio(
+        "Display Mode",
+        ["3D Digital Twin (Plotly)", "2D Floorplan (Matplotlib)"],
+        index=0,
+        help="Switch between interactive 3D perspective and 2D floorplan view.",
+    )
+
+    st.divider()
 
     # Fleet size selector
     selected_robots = st.slider(
@@ -75,7 +87,7 @@ with st.sidebar:
         st.rerun()
 
     st.divider()
-    st.subheader("Simulation Controls")
+    st.subheader("Execution Controls")
 
     col_btn1, col_btn2 = st.columns(2)
     with col_btn1:
@@ -96,7 +108,6 @@ with st.sidebar:
             st.rerun()
 
     with col_btn4:
-        # Run 20 steps benchmark batch
         if st.button("⚡ Run 20", use_container_width=True):
             for _ in range(20):
                 sim.step()
@@ -142,21 +153,39 @@ with kpi3:
 with kpi4:
     st.metric("Collision Rate", f"{metrics['collision_rate_percent']}%", delta="0 Conflicts", delta_color="normal")
 with kpi5:
-    st.metric("Replans Triggered", metrics['replan_events'], f"Avg {metrics['avg_replan_latency_ms']} ms")
+    st.metric("Deadlocks Handled", metrics.get('deadlock_events', 0), f"Replans: {metrics['replan_events']}")
 
 # Warehouse Map & Robot Status Columns
-col_map, col_details = st.columns([1.5, 1.0])
+col_map, col_details = st.columns([1.55, 1.0])
+
+# Collect current deadlock cycles if any
+active_states: dict = {}
+for r_id, r in sim.robots.items():
+    if r.path and r.goal is not None:
+        active_states[r_id] = {
+            'pos': r.pos,
+            'goal': r.goal,
+            'path': r.path,
+            'path_index': r.path_index,
+            'is_waiting': (r.pos == r.path[r.path_index] if r.path_index < len(r.path) else True),
+        }
+current_cycles = sim.deadlock_handler.detect_deadlocks(active_states, sim.step_count) if len(active_states) >= 2 else []
 
 with col_map:
-    st.subheader("Warehouse Floorplan (15x15 Grid)")
-    fig = renderer.render(sim.robots, sim.step_count)
-    st.pyplot(fig, use_container_width=True)
-    plt.close(fig)
+    if "3D" in view_mode:
+        st.subheader("3D Interactive Digital Twin (Plotly)")
+        st.caption("Rotate (left click), Pan (right click), Zoom (scroll), or Hover for live telemetry.")
+        fig_3d = renderer_3d.render_3d(sim.robots, sim.step_count, deadlock_cycles=current_cycles, height=620)
+        st.plotly_chart(fig_3d, use_container_width=True)
+    else:
+        st.subheader("2D Warehouse Floorplan (Matplotlib)")
+        fig_2d = renderer_2d.render(sim.robots, sim.step_count)
+        st.pyplot(fig_2d, use_container_width=True)
+        plt.close(fig_2d)
 
 with col_details:
     st.subheader("Fleet Telemetry & Status")
 
-    # Robot Table
     robot_records = []
     for r_id, r in sorted(sim.robots.items()):
         robot_records.append({
@@ -178,13 +207,29 @@ with col_details:
 
     st.divider()
     st.subheader("Multi-Robot Conflict Check")
-    # Verify current live paths across all active robots
     active_paths = {r_id: r.path[r.path_index:] for r_id, r in sim.robots.items() if r.path}
     live_conflicts = MultiAgentPlanner.detect_conflicts(active_paths)
     if not live_conflicts:
         st.success("✅ **Space-Time Verification**: 0 Vertex & 0 Edge Conflicts detected across all planned horizons.")
     else:
         st.error(f"⚠️ {len(live_conflicts)} conflicts detected.")
+
+
+# ----------------- DEADLOCK TELEMETRY & RECOVERY LOG -----------------
+st.divider()
+st.subheader("🛡️ Wait-For Graph (WFG) & Deadlock Recovery Telemetry")
+if current_cycles:
+    st.warning(f"⚠️ **Active Circular Wait Detected**: Cycles {current_cycles}. Recovery pipeline active.")
+else:
+    st.success("✅ **Wait-For Graph Status**: Acyclic (No circular wait conditions).")
+
+dl_events = sim.deadlock_handler.event_log
+if dl_events:
+    event_data = [e.to_dict() for e in reversed(dl_events[-10:])]
+    df_dl = pd.DataFrame(event_data)
+    st.dataframe(df_dl[["timestamp", "cycle", "strategy_used", "success", "latency_ms", "message"]], use_container_width=True, hide_index=True)
+else:
+    st.caption("No deadlock events encountered yet in current run.")
 
 
 # ----------------- SCALABILITY & PERFORMANCE ANALYSIS -----------------

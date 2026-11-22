@@ -15,6 +15,7 @@ class MetricsCollector:
         self.detected_conflicts_count = 0
         self.replan_events_count = 0
         self.replan_latencies_ms: List[float] = []
+        self.deadlock_events_count = 0
         self.robot_active_steps: Dict[int, int] = {}
         self.robot_idle_steps: Dict[int, int] = {}
         self.scaling_data: Dict[int, float] = {}  # robot_count -> avg planning cost
@@ -45,6 +46,10 @@ class MetricsCollector:
         self.replan_events_count += 1
         self.replan_latencies_ms.append(latency_ms)
 
+    def record_deadlock_event(self) -> None:
+        """Record deadlock detection and recovery event."""
+        self.deadlock_events_count += 1
+
     def record_scaling_benchmark(self, num_robots: int, avg_cost: float) -> None:
         """Records planning cost scaling for given robot count."""
         self.scaling_data[num_robots] = avg_cost
@@ -74,6 +79,7 @@ class MetricsCollector:
             'collision_rate_percent': 0.0 if self.detected_conflicts_count == 0 else round((self.detected_conflicts_count / max(1, self.total_robot_steps)) * 100, 2),
             'replan_events': self.replan_events_count,
             'avg_replan_latency_ms': round(avg_latency, 2),
+            'deadlock_events': self.deadlock_events_count,
             'robot_utilization_percent': round(overall_utilization, 1),
             'scaling_data': self.scaling_data,
         }
