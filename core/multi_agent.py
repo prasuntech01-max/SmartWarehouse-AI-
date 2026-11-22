@@ -36,13 +36,14 @@ class MultiAgentPlanner:
         paths: Dict[int, Any],
         start_times: Optional[Dict[int, int]] = None,
         warehouse: Optional[WarehouseGrid] = None,
+        park_at_goal: bool = True,
     ) -> List[ConflictReport]:
         """
         Exhaustively scans a dictionary of robot paths to detect any vertex or edge collisions.
         Returns a list of all detected conflicts.
         """
         detector = MultiRobotConflictDetector(warehouse=warehouse)
-        return detector.detect_conflicts(paths, start_times=start_times)
+        return detector.detect_conflicts(paths, start_times=start_times, park_at_goal=park_at_goal)
 
     def plan_prioritized(
         self,

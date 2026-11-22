@@ -1,14 +1,22 @@
 """Interactive 3D warehouse visualization using Plotly."""
 
-from typing import Dict, List, Tuple, Optional, Any
+from typing import Dict, List, Tuple, Optional, Any, Set
 import plotly.graph_objects as go
 from core.grid import WarehouseGrid
 from simulation.engine import RobotState
 from visualization.renderer import ROBOT_COLORS
 
 
+PRIORITY_COLORS = {
+    1: "#95A5A6",  # Low (Gray)
+    2: "#3498DB",  # Normal (Blue)
+    3: "#E67E22",  # High (Orange)
+    4: "#E74C3C",  # Urgent (Red)
+}
+
+
 class Warehouse3DRenderer:
-    """Renders a 3D digital-twin of the warehouse using Plotly 3D."""
+    """Renders an interactive 3D digital-twin of the warehouse using Plotly 3D."""
 
     def __init__(self, grid: WarehouseGrid):
         self.grid = grid
@@ -30,12 +38,10 @@ class Warehouse3DRenderer:
         y0, y1 = y - dy / 2, y + dy / 2
         z0, z1 = z_min, z_max
 
-        # 8 vertices of a cuboid
         vx = [x0, x1, x1, x0, x0, x1, x1, x0]
         vy = [y0, y0, y1, y1, y0, y0, y1, y1]
         vz = [z0, z0, z0, z0, z1, z1, z1, z1]
 
-        # 12 triangular faces
         i = [7, 0, 0, 0, 4, 4, 6, 6, 4, 0, 3, 2]
         j = [3, 4, 1, 2, 5, 6, 5, 2, 0, 1, 6, 3]
         k = [0, 7, 2, 3, 6, 7, 1, 1, 5, 5, 7, 6]
@@ -60,11 +66,12 @@ class Warehouse3DRenderer:
         robots: Dict[int, RobotState],
         step_count: int,
         deadlock_cycles: Optional[List[List[int]]] = None,
+        updated_paths: Optional[Dict[int, List[Tuple[int, int]]]] = None,
         height: int = 700,
     ) -> go.Figure:
         """
-        Generates interactive 3D scene containing floor, shelves, docks,
-        stations, dynamic obstacles, robot bodies, trails, and deadlock alerts.
+        Generates interactive 3D digital-twin containing warehouse layout, perimeter walls,
+        active task pickup/delivery beacons, mission rays, robot telemetry, and deadlock alerts.
         """
         fig = go.Figure()
         w, h = self.grid.width, self.grid.height
@@ -100,6 +107,22 @@ class Warehouse3DRenderer:
             line=dict(color='#BDC3C7', width=1.5),
             hoverinfo='skip',
             showlegend=False,
+        ))
+
+        # 1b. Perimeter Boundary Walls
+        wall_x = [-0.5, w - 0.5, w - 0.5, -0.5, -0.5]
+        wall_y = [-0.5, -0.5, h - 0.5, h - 0.5, -0.5]
+        wall_z_top = [0.45] * 5
+
+        fig.add_trace(go.Scatter3d(
+            x=wall_x,
+            y=wall_y,
+            z=wall_z_top,
+            mode='lines',
+            line=dict(color='#7F8C8D', width=3),
+            name="Perimeter Wall",
+            showlegend=False,
+            hoverinfo='skip',
         ))
 
         # 2. Charging Docks (Green pads)
@@ -162,7 +185,7 @@ class Warehouse3DRenderer:
             )
             fig.add_trace(obs_mesh)
 
-        # Flat legend proxies for Shelves and Dynamic Obstacles
+        # Legend proxies
         fig.add_trace(go.Scatter3d(
             x=[None], y=[None], z=[None],
             mode='markers',
@@ -177,17 +200,83 @@ class Warehouse3DRenderer:
                 name="Dynamic Obstacles",
             ))
 
+            obs_x = [o[0] for o in self.grid.dynamic_obstacles]
+            obs_y = [o[1] for o in self.grid.dynamic_obstacles]
+            obs_z = [1.05] * len(obs_x)
+            fig.add_trace(go.Scatter3d(
+                x=obs_x,
+                y=obs_y,
+                z=obs_z,
+                mode='markers+text',
+                marker=dict(size=12, color='#E74C3C', symbol='diamond'),
+                text=["⚠️ OBSTACLE"] * len(obs_x),
+                textposition='top center',
+                textfont=dict(size=9, color='#C0392B', family='Arial Black'),
+                name="Obstacle Alert",
+                showlegend=False,
+            ))
+
         # Flatten deadlock cycles to a set of affected robot IDs
         deadlocked_robot_ids: Set[int] = set()
         if deadlock_cycles:
             for c in deadlock_cycles:
                 deadlocked_robot_ids.update(c)
 
-        # 6. Planned Paths (3D Floating Lines)
+        # 6. Task Mission Beacons & Connecting Mission Rays (Module 9)
+        for r_id, robot in robots.items():
+            if robot.assigned_task:
+                task = robot.assigned_task
+                p_color = PRIORITY_COLORS.get(int(getattr(task, 'priority', 2)), "#3498DB")
+
+                # Pickup spot beacon
+                fig.add_trace(go.Scatter3d(
+                    x=[task.pick_spot[0]],
+                    y=[task.pick_spot[1]],
+                    z=[0.25],
+                    mode='markers+text',
+                    marker=dict(size=10, color=p_color, symbol='diamond-open', line=dict(color=p_color, width=2.5)),
+                    text=[f"Pick T#{task.task_id}"],
+                    textposition='top center',
+                    textfont=dict(size=8, color=p_color, family='Arial Bold'),
+                    name=f"Pick T#{task.task_id}",
+                    showlegend=False,
+                ))
+
+                # Mission ray: connecting robot to current mission target
+                target_pos = task.pick_spot if robot.state in ('MOVING_TO_PICK', 'PICKING') else task.delivery_station
+                fig.add_trace(go.Scatter3d(
+                    x=[robot.pos[0], target_pos[0]],
+                    y=[robot.pos[1], target_pos[1]],
+                    z=[0.30, 0.30],
+                    mode='lines',
+                    line=dict(color=p_color, width=2, dash='dashdot'),
+                    name=f"Task T#{task.task_id} Ray",
+                    hoverinfo='name',
+                    showlegend=False,
+                ))
+
+        # 7. Planned Paths and Recent Movement Trails
         for r_id, robot in robots.items():
             color = ROBOT_COLORS.get(r_id, '#7F8C8D')
+
+            # Recent trail trace
+            if robot.trail and len(robot.trail) > 1:
+                tx = [p[0] for p in robot.trail]
+                ty = [p[1] for p in robot.trail]
+                tz = [0.04] * len(tx)
+                fig.add_trace(go.Scatter3d(
+                    x=tx,
+                    y=ty,
+                    z=tz,
+                    mode='lines',
+                    line=dict(color=color, width=2, dash='dot'),
+                    name=f"Trail R{r_id}",
+                    hoverinfo='skip',
+                    showlegend=False,
+                ))
+
+            # Active remaining planned path
             if robot.path and len(robot.path) > 1:
-                # Remaining trajectory
                 rem_path = robot.path[robot.path_index:]
                 px = [p[0] for p in rem_path]
                 py = [p[1] for p in rem_path]
@@ -202,6 +291,23 @@ class Warehouse3DRenderer:
                     hoverinfo='name',
                 ))
 
+            # Optional dynamically updated replanned path overlay
+            if updated_paths and r_id in updated_paths:
+                up_path = updated_paths[r_id]
+                if up_path:
+                    ux = [p[0] for p in up_path]
+                    uy = [p[1] for p in up_path]
+                    uz = [0.12] * len(ux)
+                    fig.add_trace(go.Scatter3d(
+                        x=ux,
+                        y=uy,
+                        z=uz,
+                        mode='lines',
+                        line=dict(color='#E67E22', width=4, dash='dash'),
+                        name=f"Replanned R{r_id}",
+                        hoverinfo='name',
+                    ))
+
             # Destination marker
             if robot.goal is not None and robot.state not in ('IDLE', 'DOCKED'):
                 fig.add_trace(go.Scatter3d(
@@ -215,21 +321,39 @@ class Warehouse3DRenderer:
                     showlegend=False,
                 ))
 
-        # 7. Robots (3D Mobile Units)
+        # 8. Robots (3D Mobile Units) with Direction Cues and Telemetry
         rx, ry, rz = [], [], []
         r_colors = []
         r_labels = []
         r_hovers = []
 
         for r_id, robot in sorted(robots.items()):
-            color = ROBOT_COLORS.get(r_id, '#3498DB')
+            base_color = ROBOT_COLORS.get(r_id, '#3498DB')
+            if robot.state in ('PICKING', 'DELIVERING'):
+                status_color = '#F39C12'
+            elif robot.state == 'IDLE':
+                status_color = '#95A5A6'
+            else:
+                status_color = base_color
+
             rx.append(robot.pos[0])
             ry.append(robot.pos[1])
             rz.append(0.35)
-            r_colors.append(color)
+            r_colors.append(status_color)
             r_labels.append(f"R{r_id}")
+
+            task_info = f"Task #{robot.assigned_task.task_id} ({robot.assigned_task.priority_label})" if robot.assigned_task else "None"
+            battery_val = getattr(robot, 'battery', 100.0)
+            completed_val = getattr(robot, 'completed_tasks', 0)
+            dist_val = getattr(robot, 'total_distance', 0)
+
             r_hovers.append(
-                f"<b>Robot R{r_id}</b><br>State: {robot.state}<br>Pos: {robot.pos}<br>Goal: {robot.goal}"
+                f"<b>Robot R{r_id}</b><br>"
+                f"State: {robot.state}<br>"
+                f"Pos: {robot.pos} | Goal: {robot.goal}<br>"
+                f"Assigned: {task_info}<br>"
+                f"Battery: {battery_val:.1f}%<br>"
+                f"Completed: {completed_val} tasks | Dist: {dist_val}m"
             )
 
         fig.add_trace(go.Scatter3d(
@@ -251,7 +375,7 @@ class Warehouse3DRenderer:
             name="Robot Fleet",
         ))
 
-        # 8. Deadlock Warning Indicators
+        # 9. Deadlock Warning Indicators
         if deadlocked_robot_ids:
             dl_x, dl_y, dl_z, dl_text = [], [], [], []
             for r_id in deadlocked_robot_ids:
@@ -291,7 +415,7 @@ class Warehouse3DRenderer:
                     backgroundcolor="#F8F9FA",
                     gridcolor="#BDC3C7",
                     showbackground=True,
-                    dtick=1,
+                    dtick=2,
                 ),
                 yaxis=dict(
                     title="Y (m)",
@@ -299,7 +423,7 @@ class Warehouse3DRenderer:
                     backgroundcolor="#F8F9FA",
                     gridcolor="#BDC3C7",
                     showbackground=True,
-                    dtick=1,
+                    dtick=2,
                 ),
                 zaxis=dict(
                     title="Z (m)",
