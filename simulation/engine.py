@@ -1,6 +1,8 @@
 """Discrete-time simulation engine for the multi-robot warehouse."""
 
-from typing import Dict, List, Tuple, Optional, Any
+import math
+import time
+from typing import Dict, List, Tuple, Optional, Any, Set
 from dataclasses import dataclass, field
 from core.grid import WarehouseGrid
 from core.reservation import ReservationTable
@@ -11,6 +13,8 @@ from core.replanner import DynamicReplanner
 from core.obstacle_manager import DynamicObstacleManager
 from core.task_manager import TaskManager, WarehouseTask, TaskPriority
 from core.task_assignment import TaskAssignmentEngine, AssignmentStrategy, AssignmentDecision
+from core.parcels import Parcel, ParcelType, ParcelStatus, ParcelPriority, InventoryManager, PARCEL_SPECS
+from core.commands import CommandType, CommandResult, RobotCommandLogEntry
 from simulation.metrics import MetricsCollector
 
 
@@ -19,16 +23,22 @@ class RobotState:
     robot_id: int
     home_dock: Tuple[int, int]
     pos: Tuple[int, int]
-    state: str = 'IDLE'  # IDLE, MOVING_TO_PICK, PICKING, MOVING_TO_DELIVERY, DELIVERING, RETURNING_DOCK
+    state: str = 'IDLE'  # IDLE, MOVING_TO_PICK, PICKING, MOVING_TO_DELIVERY, DELIVERING, RETURNING_DOCK, CARRYING, E_STOPPED, PAUSED
+    mode: str = 'AUTO'   # 'AUTO' or 'MANUAL'
+    heading: float = 0.0 # Yaw heading in radians (0 = +X, pi/2 = +Y, pi = -X, -pi/2 = -Y)
     goal: Optional[Tuple[int, int]] = None
     path: List[Tuple[int, int]] = field(default_factory=list)
     path_index: int = 0
     assigned_task: Optional[WarehouseTask] = None
+    carrying_parcel: Optional[Parcel] = None
     trail: List[Tuple[int, int]] = field(default_factory=list)
     wait_counter: int = 0
     battery: float = 100.0
+    speed: float = 1.2
+    health: float = 100.0
     total_distance: int = 0
     completed_tasks: int = 0
+    e_stopped: bool = False
 
 
 class WarehouseSimulator:
@@ -48,6 +58,10 @@ class WarehouseSimulator:
         self.replanner = DynamicReplanner(self.grid, self.reservation_table)
         self.obstacle_manager = DynamicObstacleManager()
         self.task_manager = TaskManager(self.grid, seed=self.seed)
+        self.inventory_manager = InventoryManager(seed=self.seed)
+        self.command_history: List[RobotCommandLogEntry] = []
+        self.command_counter: int = 0
+        self.global_e_stop: bool = False
         self.assignment_strategy = AssignmentStrategy.WEIGHTED_MULTI_CRITERIA
         self.assignment_engine = TaskAssignmentEngine(self.grid, default_strategy=self.assignment_strategy)
         self.metrics = MetricsCollector()
@@ -56,6 +70,12 @@ class WarehouseSimulator:
         self.robots: Dict[int, RobotState] = {}
         self._init_fleet()
         self.task_manager.populate_initial_tasks(count=20, current_step=0)
+        self.inventory_manager.seed_inventory(self.grid, count=25, tick=0)
+
+    @property
+    def tasks(self) -> Dict[int, WarehouseTask]:
+        """Provides direct access to all tasks registered in the task manager."""
+        return self.task_manager.tasks
 
     def _init_fleet(self) -> None:
         """Initializes robot fleet parked at charging docks."""
@@ -92,8 +112,12 @@ class WarehouseSimulator:
         self.reservation_table.clear()
         self.metrics.reset()
         self.task_manager = TaskManager(self.grid, seed=self.seed)
+        self.inventory_manager = InventoryManager(seed=self.seed)
+        self.command_history.clear()
+        self.global_e_stop = False
         self.assignment_engine = TaskAssignmentEngine(self.grid, default_strategy=self.assignment_strategy)
         self.task_manager.populate_initial_tasks(count=20, current_step=0)
+        self.inventory_manager.seed_inventory(self.grid, count=25, tick=0)
         self._init_fleet()
 
     def set_assignment_strategy(self, strategy: AssignmentStrategy) -> None:
@@ -202,6 +226,307 @@ class WarehouseSimulator:
         task.assigned_robot = None
         return self.assign_task_manually(task_id, new_robot_id)
 
+    def submit_command(
+        self,
+        robot_id: int,
+        command: Any,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> CommandResult:
+        """Executes a validated command on a robot with safety interlocks."""
+        cmd_str = command.value if isinstance(command, CommandType) else str(command).upper()
+        params = params or {}
+
+        if robot_id not in self.robots:
+            res = CommandResult(ok=False, reason=f"Robot R{robot_id} not found in fleet.", robot_id=robot_id, command=cmd_str, params=params)
+            self._log_command(robot_id, cmd_str, params, res)
+            return res
+
+        robot = self.robots[robot_id]
+
+        # Global emergency stop check
+        if self.global_e_stop and cmd_str not in ("RESUME", "RESET"):
+            res = CommandResult(ok=False, reason="GLOBAL EMERGENCY STOP is active. All commands rejected until cleared/resumed.", robot_id=robot_id, command=cmd_str, params=params, resulting_pos=robot.pos, resulting_state=robot.state, resulting_mode=robot.mode)
+            self._log_command(robot_id, cmd_str, params, res)
+            return res
+
+        # Individual robot safety stop check
+        if robot.e_stopped and cmd_str not in ("RESUME", "RESET"):
+            res = CommandResult(ok=False, reason=f"Robot R{robot_id} is in EMERGENCY STOP state. Must RESUME or RESET first.", robot_id=robot_id, command=cmd_str, params=params, resulting_pos=robot.pos, resulting_state=robot.state, resulting_mode=robot.mode)
+            self._log_command(robot_id, cmd_str, params, res)
+            return res
+
+        if cmd_str == "SET_MODE":
+            target_mode = str(params.get("mode", "AUTO")).upper()
+            if target_mode not in ("AUTO", "MANUAL"):
+                res = CommandResult(ok=False, reason="Invalid mode. Must be 'AUTO' or 'MANUAL'.", robot_id=robot_id, command=cmd_str, params=params)
+            else:
+                robot.mode = target_mode
+                res = CommandResult(ok=True, reason=f"Robot R{robot_id} switched to {target_mode} mode.", robot_id=robot_id, command=cmd_str, params=params, resulting_pos=robot.pos, resulting_state=robot.state, resulting_mode=robot.mode)
+            self._log_command(robot_id, cmd_str, params, res)
+            return res
+
+        elif cmd_str == "EMERGENCY_STOP":
+            robot.e_stopped = True
+            robot.state = "E_STOPPED"
+            robot.path.clear()
+            robot.path_index = 0
+            self.reservation_table.release_future_reservations(robot_id, from_time=self.step_count)
+            res = CommandResult(ok=True, reason=f"EMERGENCY STOP engaged on Robot R{robot_id}.", robot_id=robot_id, command=cmd_str, params=params, resulting_pos=robot.pos, resulting_state=robot.state, resulting_mode=robot.mode)
+            self._log_command(robot_id, cmd_str, params, res)
+            return res
+
+        elif cmd_str == "RESUME":
+            robot.e_stopped = False
+            self.global_e_stop = False
+            if robot.state in ("E_STOPPED", "PAUSED"):
+                robot.state = "IDLE" if not robot.carrying_parcel else "CARRYING"
+            res = CommandResult(ok=True, reason=f"Robot R{robot_id} resumed normal operation.", robot_id=robot_id, command=cmd_str, params=params, resulting_pos=robot.pos, resulting_state=robot.state, resulting_mode=robot.mode)
+            self._log_command(robot_id, cmd_str, params, res)
+            return res
+
+        elif cmd_str == "PAUSE":
+            if robot.state not in ("E_STOPPED", "IDLE"):
+                robot.state = "PAUSED"
+            res = CommandResult(ok=True, reason=f"Robot R{robot_id} paused.", robot_id=robot_id, command=cmd_str, params=params, resulting_pos=robot.pos, resulting_state=robot.state, resulting_mode=robot.mode)
+            self._log_command(robot_id, cmd_str, params, res)
+            return res
+
+        elif cmd_str == "STOP":
+            robot.path.clear()
+            robot.path_index = 0
+            robot.goal = None
+            if robot.assigned_task:
+                self.task_manager.cancel_task(robot.assigned_task.task_id, self.step_count, reason="Manual STOP command")
+                robot.assigned_task = None
+            self.reservation_table.release_future_reservations(robot_id, from_time=self.step_count)
+            robot.state = "IDLE" if not robot.carrying_parcel else "CARRYING"
+            res = CommandResult(ok=True, reason=f"Robot R{robot_id} halted. Active path cleared.", robot_id=robot_id, command=cmd_str, params=params, resulting_pos=robot.pos, resulting_state=robot.state, resulting_mode=robot.mode)
+            self._log_command(robot_id, cmd_str, params, res)
+            return res
+
+        elif cmd_str == "RESET":
+            robot.e_stopped = False
+            robot.path.clear()
+            robot.path_index = 0
+            robot.goal = None
+            if robot.carrying_parcel:
+                self.inventory_manager.fail_parcel(robot.carrying_parcel.parcel_id, self.step_count, reason="Manual robot reset", safe_drop_cell=robot.pos)
+                robot.carrying_parcel = None
+            if robot.assigned_task:
+                self.task_manager.cancel_task(robot.assigned_task.task_id, self.step_count, reason="Manual reset")
+                robot.assigned_task = None
+            self.reservation_table.release_future_reservations(robot_id, from_time=self.step_count)
+            robot.pos = robot.home_dock
+            robot.heading = 0.0
+            robot.battery = 100.0
+            robot.state = "IDLE"
+            self.reservation_table.reserve_vertex(robot.pos[0], robot.pos[1], self.step_count + 1, robot_id=robot_id)
+            res = CommandResult(ok=True, reason=f"Robot R{robot_id} reset to charging dock {robot.home_dock}.", robot_id=robot_id, command=cmd_str, params=params, resulting_pos=robot.pos, resulting_state=robot.state, resulting_mode=robot.mode)
+            self._log_command(robot_id, cmd_str, params, res)
+            return res
+
+        elif cmd_str in ("TURN_LEFT", "TURN_RIGHT"):
+            delta = -math.pi / 2 if cmd_str == "TURN_LEFT" else math.pi / 2
+            robot.heading = (robot.heading + delta) % (2 * math.pi)
+            res = CommandResult(ok=True, reason=f"Robot R{robot_id} turned {cmd_str.replace('TURN_', '')}. Heading: {math.degrees(robot.heading):.0f}°", robot_id=robot_id, command=cmd_str, params=params, resulting_pos=robot.pos, resulting_state=robot.state, resulting_mode=robot.mode)
+            self._log_command(robot_id, cmd_str, params, res)
+            return res
+
+        elif cmd_str in ("MOVE_FORWARD", "MOVE_BACKWARD"):
+            deg = round(math.degrees(robot.heading)) % 360
+            if deg in (0, 360):
+                dx, dy = (1, 0)
+            elif deg == 90:
+                dx, dy = (0, 1)
+            elif deg == 180:
+                dx, dy = (-1, 0)
+            else:
+                dx, dy = (0, -1)
+
+            if cmd_str == "MOVE_BACKWARD":
+                dx, dy = -dx, -dy
+
+            nx, ny = robot.pos[0] + dx, robot.pos[1] + dy
+
+            # Safety Interlock 1: Boundaries
+            if not self.grid.in_bounds(nx, ny):
+                res = CommandResult(ok=False, reason=f"Movement rejected: Cell ({nx}, {ny}) is outside warehouse perimeter.", robot_id=robot_id, command=cmd_str, params=params, resulting_pos=robot.pos, resulting_state=robot.state, resulting_mode=robot.mode)
+                self._log_command(robot_id, cmd_str, params, res)
+                return res
+
+            # Safety Interlock 2: Shelves and Static Obstacles
+            if (nx, ny) in self.grid.shelves:
+                res = CommandResult(ok=False, reason=f"Movement rejected: Cell ({nx}, {ny}) is blocked by high-bay storage racks.", robot_id=robot_id, command=cmd_str, params=params, resulting_pos=robot.pos, resulting_state=robot.state, resulting_mode=robot.mode)
+                self._log_command(robot_id, cmd_str, params, res)
+                return res
+
+            # Safety Interlock 3: Dynamic Obstacles
+            if (nx, ny) in self.grid.dynamic_obstacles:
+                res = CommandResult(ok=False, reason=f"Movement rejected: Dynamic obstacle detected at cell ({nx}, {ny}).", robot_id=robot_id, command=cmd_str, params=params, resulting_pos=robot.pos, resulting_state=robot.state, resulting_mode=robot.mode)
+                self._log_command(robot_id, cmd_str, params, res)
+                return res
+
+            # Safety Interlock 4: Other Robots
+            for other_id, other_r in self.robots.items():
+                if other_id != robot_id and other_r.pos == (nx, ny):
+                    res = CommandResult(ok=False, reason=f"Collision hazard: Cell ({nx}, {ny}) occupied by Robot R{other_id} ({other_r.pos}).", robot_id=robot_id, command=cmd_str, params=params, resulting_pos=robot.pos, resulting_state=robot.state, resulting_mode=robot.mode)
+                    self._log_command(robot_id, cmd_str, params, res)
+                    return res
+
+            # Safety Interlock 5: Reservation Table
+            if self.reservation_table.is_vertex_reserved(nx, ny, self.step_count + 1, ignore_robot=robot_id):
+                res = CommandResult(ok=False, reason=f"Space-Time conflict: Cell ({nx}, {ny}) reserved by another robot at tick {self.step_count + 1}.", robot_id=robot_id, command=cmd_str, params=params, resulting_pos=robot.pos, resulting_state=robot.state, resulting_mode=robot.mode)
+                self._log_command(robot_id, cmd_str, params, res)
+                return res
+
+            # Apply step
+            robot.pos = (nx, ny)
+            robot.trail.append((nx, ny))
+            if len(robot.trail) > 8:
+                robot.trail.pop(0)
+            robot.total_distance += 1
+            robot.battery = max(0.0, robot.battery - 0.1)
+            self.reservation_table.reserve_vertex(nx, ny, self.step_count + 1, robot_id=robot_id)
+            res = CommandResult(ok=True, reason=f"Robot R{robot_id} moved to ({nx}, {ny}).", robot_id=robot_id, command=cmd_str, params=params, resulting_pos=robot.pos, resulting_state=robot.state, resulting_mode=robot.mode)
+            self._log_command(robot_id, cmd_str, params, res)
+            return res
+
+        elif cmd_str == "GOTO_CELL":
+            target = params.get("target")
+            if not target or len(target) != 2:
+                res = CommandResult(ok=False, reason="Target coordinate missing. Specify target: (x, y).", robot_id=robot_id, command=cmd_str, params=params)
+                self._log_command(robot_id, cmd_str, params, res)
+                return res
+            tx, ty = int(target[0]), int(target[1])
+
+            if not self.grid.is_walkable(tx, ty):
+                res = CommandResult(ok=False, reason=f"Target ({tx}, {ty}) is not navigable (shelf/obstacle/out of bounds).", robot_id=robot_id, command=cmd_str, params=params)
+                self._log_command(robot_id, cmd_str, params, res)
+                return res
+
+            path = self.planner.plan(
+                start=robot.pos,
+                goal=(tx, ty),
+                start_time=self.step_count,
+                robot_id=robot_id,
+            )
+            if not path:
+                res = CommandResult(ok=False, reason=f"No collision-free A* route found from {robot.pos} to ({tx}, {ty}).", robot_id=robot_id, command=cmd_str, params=params)
+                self._log_command(robot_id, cmd_str, params, res)
+                return res
+
+            robot.goal = (tx, ty)
+            robot.path = path
+            robot.path_index = 0
+            robot.state = "MOVING_TO_DELIVERY" if robot.carrying_parcel else "MOVING_TO_PICK"
+            self.reservation_table.reserve_path(path, robot_id=robot_id, start_time=self.step_count)
+            res = CommandResult(ok=True, reason=f"Route planned to ({tx}, {ty}): {len(path)} waypoints calculated via Space-Time A*.", robot_id=robot_id, command=cmd_str, params=params, resulting_pos=robot.pos, resulting_state=robot.state, resulting_mode=robot.mode)
+            self._log_command(robot_id, cmd_str, params, res)
+            return res
+
+        elif cmd_str in ("PICKUP", "CARRY"):
+            if robot.carrying_parcel:
+                res = CommandResult(ok=False, reason=f"Robot R{robot_id} is already carrying Parcel {robot.carrying_parcel.parcel_id}. Drop it first.", robot_id=robot_id, command=cmd_str, params=params, resulting_pos=robot.pos, resulting_state=robot.state, resulting_mode=robot.mode)
+                self._log_command(robot_id, cmd_str, params, res)
+                return res
+
+            target_pid = params.get("parcel_id")
+            parcel = None
+            if target_pid:
+                parcel = self.inventory_manager.get_parcel_by_id(target_pid)
+            else:
+                candidates = [
+                    p for p in self.inventory_manager.parcels.values()
+                    if p.status in ("AVAILABLE", "RESERVED")
+                    and (p.pickup_cell == robot.pos or (p.location and abs(p.location[0] - robot.pos[0]) + abs(p.location[1] - robot.pos[1]) <= 1))
+                ]
+                if candidates:
+                    parcel = candidates[0]
+
+            if not parcel:
+                res = CommandResult(ok=False, reason=f"No available parcel at or adjacent to Robot R{robot_id} position {robot.pos}.", robot_id=robot_id, command=cmd_str, params=params, resulting_pos=robot.pos, resulting_state=robot.state, resulting_mode=robot.mode)
+                self._log_command(robot_id, cmd_str, params, res)
+                return res
+
+            if parcel.spec.heavy and robot_id != 1:
+                res = CommandResult(ok=False, reason=f"Capacity rule violation: Heavy parcel ({parcel.parcel_type.value}, {parcel.spec.weight_kg}kg) requires Heavy AMR TITAN-X (Robot 1). Humanoid R{robot_id} capacity is 15kg max.", robot_id=robot_id, command=cmd_str, params=params)
+                self._log_command(robot_id, cmd_str, params, res)
+                return res
+
+            if parcel.status == "AVAILABLE":
+                self.inventory_manager.reserve_parcel(parcel.parcel_id, robot_id, self.step_count)
+            self.inventory_manager.pickup_parcel(parcel.parcel_id, robot_id, self.step_count)
+            self.inventory_manager.begin_transit(parcel.parcel_id, robot_id, self.step_count)
+            robot.carrying_parcel = parcel
+            robot.state = "CARRYING"
+            res = CommandResult(ok=True, reason=f"Parcel {parcel.parcel_id} ({parcel.parcel_type.value}) picked up and secured by Robot R{robot_id}.", robot_id=robot_id, command=cmd_str, params=params, resulting_pos=robot.pos, resulting_state=robot.state, resulting_mode=robot.mode)
+            self._log_command(robot_id, cmd_str, params, res)
+            return res
+
+        elif cmd_str == "DROP":
+            if not robot.carrying_parcel:
+                res = CommandResult(ok=False, reason=f"Robot R{robot_id} is not carrying any parcel to drop.", robot_id=robot_id, command=cmd_str, params=params, resulting_pos=robot.pos, resulting_state=robot.state, resulting_mode=robot.mode)
+                self._log_command(robot_id, cmd_str, params, res)
+                return res
+
+            parcel = robot.carrying_parcel
+            if not self.grid.is_walkable(robot.pos[0], robot.pos[1]):
+                res = CommandResult(ok=False, reason=f"Cannot drop parcel at non-walkable cell {robot.pos}.", robot_id=robot_id, command=cmd_str, params=params)
+                self._log_command(robot_id, cmd_str, params, res)
+                return res
+
+            self.inventory_manager.deliver_parcel(parcel.parcel_id, robot_id, self.step_count, destination_cell=robot.pos)
+            robot.carrying_parcel = None
+            robot.state = "IDLE"
+            robot.completed_tasks += 1
+            if robot.assigned_task:
+                self.task_manager.complete_task(robot.assigned_task.task_id, self.step_count)
+                robot.assigned_task = None
+            res = CommandResult(ok=True, reason=f"Parcel {parcel.parcel_id} successfully delivered at {robot.pos}. Inventory updated.", robot_id=robot_id, command=cmd_str, params=params, resulting_pos=robot.pos, resulting_state=robot.state, resulting_mode=robot.mode)
+            self._log_command(robot_id, cmd_str, params, res)
+            return res
+
+        elif cmd_str == "ASSIGN_TASK":
+            tid = params.get("task_id")
+            if tid:
+                ok, reason = self.assign_task_manually(int(tid), robot_id)
+                res = CommandResult(ok=ok, reason=reason, robot_id=robot_id, command=cmd_str, params=params, resulting_pos=robot.pos, resulting_state=robot.state, resulting_mode=robot.mode)
+                self._log_command(robot_id, cmd_str, params, res)
+                return res
+            else:
+                pick = params.get("pick")
+                drop = params.get("drop")
+                if pick and drop:
+                    task, msg = self.create_custom_task(tuple(pick), tuple(drop))
+                    if task:
+                        ok, reason = self.assign_task_manually(task.task_id, robot_id)
+                        res = CommandResult(ok=ok, reason=reason, robot_id=robot_id, command=cmd_str, params=params, resulting_pos=robot.pos, resulting_state=robot.state, resulting_mode=robot.mode)
+                    else:
+                        res = CommandResult(ok=False, reason=msg, robot_id=robot_id, command=cmd_str, params=params)
+                else:
+                    res = CommandResult(ok=False, reason="Missing task_id or (pick, drop) coordinates.", robot_id=robot_id, command=cmd_str, params=params)
+                self._log_command(robot_id, cmd_str, params, res)
+                return res
+
+        else:
+            res = CommandResult(ok=False, reason=f"Unrecognized command: {cmd_str}", robot_id=robot_id, command=cmd_str, params=params)
+            self._log_command(robot_id, cmd_str, params, res)
+            return res
+
+    def _log_command(self, robot_id: int, command: str, params: Dict[str, Any], result: CommandResult) -> None:
+        self.command_counter += 1
+        entry = RobotCommandLogEntry(
+            entry_id=self.command_counter,
+            tick=self.step_count,
+            robot_id=robot_id,
+            command=command,
+            params=params,
+            result=result,
+        )
+        self.command_history.append(entry)
+        if len(self.command_history) > 200:
+            self.command_history.pop(0)
+
     def clear_dynamic_obstacles(self) -> None:
         """Clears all dynamic obstacles from grid and obstacle manager."""
         self.grid.clear_dynamic_obstacles()
@@ -271,8 +596,8 @@ class WarehouseSimulator:
         """Advance the simulation world by 1 discrete time step."""
         current_step = self.step_count
 
-        # 1. Multi-Robot Task Assignment & Dispatch for IDLE robots
-        idle_robots = {r_id: self.robots[r_id] for r_id, r in self.robots.items() if r.state == 'IDLE'}
+        # 1. Multi-Robot Task Assignment & Dispatch for IDLE robots (AUTO mode only)
+        idle_robots = {r_id: self.robots[r_id] for r_id, r in self.robots.items() if r.state == 'IDLE' and r.mode == 'AUTO' and not r.e_stopped}
         pending_tasks = self.task_manager.get_pending_tasks()
 
         if idle_robots and pending_tasks:
@@ -373,6 +698,28 @@ class WarehouseSimulator:
                 if robot.wait_counter > 0:
                     robot.wait_counter -= 1
                 if robot.wait_counter == 0 and robot.assigned_task:
+                    # Physically attach parcel from inventory
+                    avail_parcels = [
+                        p for p in self.inventory_manager.parcels.values()
+                        if p.pickup_cell == robot.assigned_task.pick_spot and p.status in ('AVAILABLE', 'RESERVED')
+                    ]
+                    if avail_parcels:
+                        p_obj = avail_parcels[0]
+                    else:
+                        p_obj = self.inventory_manager.create_parcel(
+                            parcel_type=ParcelType.MEDIUM_CARTON,
+                            location=robot.assigned_task.pick_spot,
+                            pickup_cell=robot.assigned_task.pick_spot,
+                            destination=robot.assigned_task.delivery_station,
+                            tick=current_step,
+                        )
+                    if p_obj.status == 'AVAILABLE':
+                        self.inventory_manager.reserve_parcel(p_obj.parcel_id, r_id, current_step)
+                    if p_obj.status == 'RESERVED':
+                        self.inventory_manager.pickup_parcel(p_obj.parcel_id, r_id, current_step)
+                        self.inventory_manager.begin_transit(p_obj.parcel_id, r_id, current_step)
+                        robot.carrying_parcel = p_obj
+
                     robot.goal = robot.assigned_task.delivery_station
                     robot.state = 'MOVING_TO_DELIVERY'
                     robot.assigned_task.transition_to('MOVING_TO_DELIVERY', current_step, "Dispatched to delivery station")
@@ -403,6 +750,14 @@ class WarehouseSimulator:
                 if robot.wait_counter > 0:
                     robot.wait_counter -= 1
                 if robot.wait_counter == 0 and robot.assigned_task:
+                    if robot.carrying_parcel:
+                        self.inventory_manager.deliver_parcel(
+                            robot.carrying_parcel.parcel_id,
+                            r_id,
+                            current_step,
+                            destination_cell=robot.pos,
+                        )
+                        robot.carrying_parcel = None
                     robot.completed_tasks += 1
                     self.task_manager.complete_task(robot.assigned_task.task_id, current_step)
                     self.metrics.record_task_completion()
@@ -459,12 +814,22 @@ class WarehouseSimulator:
         for r_id, new_pos in next_positions.items():
             robot = self.robots[r_id]
             if new_pos != robot.pos:
+                dx = new_pos[0] - robot.pos[0]
+                dy = new_pos[1] - robot.pos[1]
+                robot.heading = math.atan2(dy, dx)
                 robot.total_distance += 1
                 robot.battery = max(0.0, robot.battery - 0.1)
             robot.pos = new_pos
             robot.trail.append(new_pos)
             if len(robot.trail) > 8:
                 robot.trail.pop(0)
+            if robot.carrying_parcel:
+                robot.carrying_parcel.location = None
+
+        # Ensure stationary manual / idle robots hold their cell in reservation table for next tick
+        for r_id, robot in self.robots.items():
+            if robot.mode == 'MANUAL' or robot.state in ('IDLE', 'CARRYING', 'E_STOPPED', 'PAUSED'):
+                self.reservation_table.reserve_vertex(robot.pos[0], robot.pos[1], current_step + 1, robot_id=r_id)
 
         # 4. Record step metrics
         robot_statuses = {r_id: r.state for r_id, r in self.robots.items()}

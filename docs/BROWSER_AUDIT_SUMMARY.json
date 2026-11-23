@@ -1,0 +1,112 @@
+{
+  "sectionsAudited": 14,
+  "allPagesPassed": true,
+  "consoleErrorsCount": 0,
+  "pageErrorsCount": 0,
+  "interactiveChecks": {
+    "canvasDetected": true,
+    "presetsTested": true,
+    "themesTested": true,
+    "drawerTested": true
+  },
+  "auditResults": [
+    {
+      "page": "Executive Command Centre",
+      "key": "command_centre",
+      "found": true,
+      "hasErrors": false,
+      "screenshot": "C:\\Users\\Prasun\\SmartWarehouse-AI.2\\docs\\screenshots\\final_deploy\\pages\\command_centre.png"
+    },
+    {
+      "page": "3D Digital Twin",
+      "key": "digital_twin",
+      "found": true,
+      "hasErrors": false,
+      "screenshot": "C:\\Users\\Prasun\\SmartWarehouse-AI.2\\docs\\screenshots\\final_deploy\\pages\\digital_twin.png"
+    },
+    {
+      "page": "Robot Fleet Telemetry",
+      "key": "robot_fleet",
+      "found": true,
+      "hasErrors": false,
+      "screenshot": "C:\\Users\\Prasun\\SmartWarehouse-AI.2\\docs\\screenshots\\final_deploy\\pages\\robot_fleet.png"
+    },
+    {
+      "page": "Warehouse Operations",
+      "key": "operations",
+      "found": true,
+      "hasErrors": false,
+      "screenshot": "C:\\Users\\Prasun\\SmartWarehouse-AI.2\\docs\\screenshots\\final_deploy\\pages\\operations.png"
+    },
+    {
+      "page": "Path Planning & Space-Time",
+      "key": "path_planning",
+      "found": true,
+      "hasErrors": false,
+      "screenshot": "C:\\Users\\Prasun\\SmartWarehouse-AI.2\\docs\\screenshots\\final_deploy\\pages\\path_planning.png"
+    },
+    {
+      "page": "Task Management",
+      "key": "task_management",
+      "found": true,
+      "hasErrors": false,
+      "screenshot": "C:\\Users\\Prasun\\SmartWarehouse-AI.2\\docs\\screenshots\\final_deploy\\pages\\task_management.png"
+    },
+    {
+      "page": "IoT Command Centre",
+      "key": "iot_centre",
+      "found": true,
+      "hasErrors": false,
+      "screenshot": "C:\\Users\\Prasun\\SmartWarehouse-AI.2\\docs\\screenshots\\final_deploy\\pages\\iot_centre.png"
+    },
+    {
+      "page": "Emergency Response",
+      "key": "emergency_response",
+      "found": true,
+      "hasErrors": false,
+      "screenshot": "C:\\Users\\Prasun\\SmartWarehouse-AI.2\\docs\\screenshots\\final_deploy\\pages\\emergency_response.png"
+    },
+    {
+      "page": "AI Recommendations",
+      "key": "recommendations",
+      "found": true,
+      "hasErrors": false,
+      "screenshot": "C:\\Users\\Prasun\\SmartWarehouse-AI.2\\docs\\screenshots\\final_deploy\\pages\\recommendations.png"
+    },
+    {
+      "page": "Deep Analytics",
+      "key": "analytics",
+      "found": true,
+      "hasErrors": false,
+      "screenshot": "C:\\Users\\Prasun\\SmartWarehouse-AI.2\\docs\\screenshots\\final_deploy\\pages\\analytics.png"
+    },
+    {
+      "page": "Algorithm Benchmarking",
+      "key": "benchmarking",
+      "found": true,
+      "hasErrors": false,
+      "screenshot": "C:\\Users\\Prasun\\SmartWarehouse-AI.2\\docs\\screenshots\\final_deploy\\pages\\benchmarking.png"
+    },
+    {
+      "page": "Reports & Exports",
+      "key": "reports",
+      "found": true,
+      "hasErrors": false,
+      "screenshot": "C:\\Users\\Prasun\\SmartWarehouse-AI.2\\docs\\screenshots\\final_deploy\\pages\\reports.png"
+    },
+    {
+      "page": "System Administration",
+      "key": "admin",
+      "found": true,
+      "hasErrors": false,
+      "screenshot": "C:\\Users\\Prasun\\SmartWarehouse-AI.2\\docs\\screenshots\\final_deploy\\pages\\admin.png"
+    },
+    {
+      "page": "Settings",
+      "key": "settings",
+      "found": true,
+      "hasErrors": false,
+      "screenshot": "C:\\Users\\Prasun\\SmartWarehouse-AI.2\\docs\\screenshots\\final_deploy\\pages\\settings.png"
+    }
+  ]
+}

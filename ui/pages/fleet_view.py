@@ -45,20 +45,32 @@ def render_fleet_page(sim: Any, ai_engine: Any, analytics_service: AnalyticsServ
     st.divider()
     st.markdown("#### 📋 Detailed Per-Robot Diagnostic Telemetry")
 
+    fleet_meta = {
+        1: {"name": "TITAN-X", "type": "Heavy AMR", "color": "#00D4FF", "duty": "Heavy Pallet Transport"},
+        2: {"name": "ATLAS", "type": "Humanoid", "color": "#0077FF", "duty": "Package Picking & Handling"},
+        3: {"name": "VORTEX", "type": "Humanoid", "color": "#FF8800", "duty": "High-Speed Sorter"},
+        4: {"name": "NOVA", "type": "Humanoid", "color": "#00FF66", "duty": "Inventory & Inspection"},
+        5: {"name": "SPECTRE", "type": "Humanoid", "color": "#00F0FF", "duty": "Area Patrol & Security"},
+    }
+
     cols_b = st.columns(len(sim.robots))
     for idx, (r_id, r) in enumerate(sorted(sim.robots.items())):
         with cols_b[idx % len(cols_b)]:
             m = snapshot.fleet_metrics.get(r_id, {})
             health_val = m.get("health_score", {}).value or 100
+            info = fleet_meta.get(r_id, {"name": f"Robot {r_id}", "type": "AMR", "color": "#00F0FF", "duty": "Standard"})
             status_color = "#10B981" if health_val >= 80 else "#F59E0B" if health_val >= 60 else "#EF4444"
             st.markdown(
                 f"""
-                <div class="industry-kpi" style="border-left-color: {status_color};">
+                <div class="industry-kpi" style="border-left-color: {info['color']};">
                     <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <span style="font-size: 14px; font-weight: 700;">Robot R{r_id}</span>
-                        <span style="font-size: 10px; font-weight: 800; color: {status_color};">{r.state}</span>
+                        <span style="font-family: 'Orbitron', sans-serif; font-size: 13px; font-weight: 800; color: {info['color']};">0{r_id} {info['name']}</span>
+                        <span style="font-size: 10px; font-weight: 800; color: {status_color}; background: rgba(16, 185, 129, 0.15); padding: 2px 6px; border-radius: 4px;">{r.state}</span>
                     </div>
-                    <div style="margin: 8px 0; font-size: 20px; font-weight: 700; color: {status_color};">
+                    <div style="font-size: 11px; color: #94A3B8; margin-top: 2px; font-weight: 600;">
+                        {info['type']} &bull; {info['duty']}
+                    </div>
+                    <div style="margin: 8px 0; font-size: 22px; font-weight: 700; color: #FFFFFF; font-family: 'Rajdhani', monospace;">
                         {health_val:.0f} <span style="font-size: 11px; color: #94A3B8;">/100 Health</span>
                     </div>
                     <div style="font-size: 12px; color: #CBD5E1; line-height: 1.6;">
@@ -75,7 +87,8 @@ def render_fleet_page(sim: Any, ai_engine: Any, analytics_service: AnalyticsServ
 
     st.divider()
     st.markdown("#### 🔬 Detailed AMR Telemetry & Component Inspection")
-    sel_inspect = st.selectbox("Select Robot for Deep Hardware Inspection", [f"Robot R{r}" for r in sorted(sim.robots.keys())], key="fleet_inspect_sel")
-    inspect_id = int(sel_inspect.replace("Robot R", ""))
+    inspect_options = [f"0{r} — {fleet_meta.get(r, {}).get('name', 'Robot')} ({fleet_meta.get(r, {}).get('type', 'AMR')})" for r in sorted(sim.robots.keys())]
+    sel_inspect = st.selectbox("Select Robot for Deep Hardware Inspection", inspect_options, key="fleet_inspect_sel")
+    inspect_id = int(sel_inspect.split(" ")[0])
     if inspect_id in sim.robots:
         render_robot_inspector_drawer(sim.robots[inspect_id], inspect_id)

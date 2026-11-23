@@ -157,6 +157,26 @@ class UserRepo:
         cur.execute("UPDATE users SET role = ? WHERE id = ?", (role, user_id))
         conn.commit()
 
+    @staticmethod
+    def list_all() -> List[User]:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT id, username, password_hash, role, created_at, last_login, failed_attempts, locked_until FROM users ORDER BY id ASC")
+        rows = cur.fetchall()
+        return [
+            User(
+                id=r[0],
+                username=r[1],
+                password_hash=r[2],
+                role=r[3],
+                created_at=r[4],
+                last_login=r[5],
+                failed_attempts=r[6],
+                locked_until=r[7],
+            )
+            for r in rows
+        ]
+
 # ---------------------------------------------------------------------------
 # Incident repository (historical copy of hazard incidents)
 # ---------------------------------------------------------------------------

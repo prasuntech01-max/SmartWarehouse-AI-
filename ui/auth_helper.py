@@ -63,11 +63,10 @@ def init_auth_session() -> None:
     bootstrap_default_admin_if_empty()
 
     if "authenticated" not in st.session_state:
-        # Default session starts as OPERATOR for frictionless evaluation,
-        # but full login/role switching is supported.
+        # Default session starts as ADMIN for seamless evaluation and full access
         st.session_state.authenticated = True
-        st.session_state.username = "operator"
-        st.session_state.user_role = "OPERATOR"
+        st.session_state.username = "admin"
+        st.session_state.user_role = "ADMIN"
 
 
 def check_permission(action: str) -> bool:

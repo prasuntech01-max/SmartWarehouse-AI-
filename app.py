@@ -33,6 +33,7 @@ from recommendations.engine import RecommendationEngine
 from ui.theme import inject_custom_theme
 from ui.navigation import render_sidebar_navigation
 from ui.auth_helper import init_auth_session, check_permission
+from ui.branding import render_enterprise_header
 
 from ui.pages.command_centre import render_command_centre_view
 from ui.pages.digital_twin_view import render_digital_twin_page
@@ -66,12 +67,12 @@ init_auth_session()
 def get_simulator() -> WarehouseSimulator:
     """Retrieve or initialize simulator in session state."""
     if 'sim' not in st.session_state:
-        st.session_state.num_robots = 3
+        st.session_state.num_robots = 5
         st.session_state.paused = False
         st.session_state.batch_size = 5
         st.session_state.demo_result = None
-        st.session_state.last_message = "Simulator initialized with 3 robots on 15x15 grid — Module 13 Enterprise Ready."
-        st.session_state.sim = WarehouseSimulator(num_robots=3, width=15, height=15)
+        st.session_state.last_message = "Simulator initialized with 5 autonomous robots on 15x15 grid — TITAN-X, ATLAS, VORTEX, NOVA, SPECTRE active."
+        st.session_state.sim = WarehouseSimulator(num_robots=5, width=15, height=15)
     return st.session_state.sim
 
 
@@ -113,6 +114,9 @@ rec_engine = get_recommendation_engine(analytics_service)
 
 # Render Sidebar Navigation
 selected_view = render_sidebar_navigation()
+
+# Render Enterprise Top Header (Product Branding, Live Clock, System Status, User Pill)
+render_enterprise_header()
 
 # Route to active view
 if selected_view == "command_centre":

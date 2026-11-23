@@ -26,13 +26,30 @@ NAV_SECTIONS = [
 def render_sidebar_navigation() -> str:
     """Renders the comprehensive role-aware sidebar navigation and returns selected view."""
     with st.sidebar:
+        # 3D Metallic Brand Logo for Sidebar
         st.markdown(
             """
-            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
-                <span style="font-size: 28px;">🤖</span>
-                <div>
-                    <h2 style="margin: 0; font-size: 18px; color: #00F0FF; font-weight: 700;">SmartWarehouse AI</h2>
-                    <span style="font-size: 10px; color: #94A3B8; text-transform: uppercase; letter-spacing: 0.05em;">Enterprise Autonomous Platform</span>
+            <div style="background: linear-gradient(180deg, #090e1a 0%, #0d1527 100%);
+                        border: 1px solid rgba(0, 240, 255, 0.25);
+                        border-radius: 10px;
+                        padding: 12px;
+                        margin-bottom: 12px;
+                        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <div style="width: 32px; height: 32px; border-radius: 6px; background: #0f172a; border: 1.5px solid #00f0ff; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 10px rgba(0, 240, 255, 0.4);">
+                        <span style="font-family: 'Orbitron', monospace; font-size: 13px; font-weight: 900; color: #00f0ff;">AI</span>
+                    </div>
+                    <div>
+                        <div style="font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: 800; color: #ffffff; letter-spacing: 0.5px;">
+                            SmartWarehouse <span style="color: #d946ef; font-style: italic;">AI</span>
+                        </div>
+                        <div style="font-family: 'Rajdhani', sans-serif; font-size: 9px; color: #38bdf8; letter-spacing: 1.2px; text-transform: uppercase; font-weight: 700;">
+                            Operations &amp; Robotics Platform
+                        </div>
+                    </div>
+                </div>
+                <div style="margin-top: 8px; padding-top: 6px; border-top: 1px solid rgba(0, 240, 255, 0.15); font-family: 'Rajdhani', sans-serif; font-size: 9px; color: #94a3b8; letter-spacing: 1.5px; text-transform: uppercase; text-align: center; font-weight: 600;">
+                    AUTONOMOUS &bull; INTELLIGENT &bull; OPTIMIZED
                 </div>
             </div>
             """,
@@ -40,29 +57,30 @@ def render_sidebar_navigation() -> str:
         )
 
         # Active User & Role Display
-        username = st.session_state.get("username", "operator")
-        role = st.session_state.get("user_role", "OPERATOR")
+        username = st.session_state.get("username", "admin")
+        role = st.session_state.get("user_role", "ADMIN")
         role_color = "#EF4444" if role == "ADMIN" else "#00F0FF" if role == "OPERATOR" else "#94A3B8"
 
         st.markdown(
             f"""
-            <div style="background: #0F172A; border: 1px solid #1E293B; border-radius: 6px; padding: 8px 12px; margin-bottom: 14px;">
-                <div style="font-size: 11px; color: #94A3B8;">AUTHENTICATED SESSION</div>
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 2px;">
-                    <span style="font-size: 13px; font-weight: 600; color: #F8FAFC;">👤 {username}</span>
-                    <span style="background: {role_color}; color: #0F172A; font-size: 10px; font-weight: 800; padding: 2px 6px; border-radius: 4px;">{role}</span>
+            <div style="background: #090e1a; border: 1px solid rgba(0, 240, 255, 0.2); border-radius: 8px; padding: 8px 12px; margin-bottom: 12px;">
+                <div style="font-size: 10px; color: #64748B; font-family: 'Rajdhani', sans-serif; font-weight: 700; letter-spacing: 0.8px;">CLEARANCE IDENTITY</div>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 4px;">
+                    <span style="font-size: 13px; font-weight: 700; color: #F8FAFC;">👤 {username}</span>
+                    <span style="background: {role_color}; color: #090e1a; font-size: 10px; font-weight: 800; padding: 2px 8px; border-radius: 4px; letter-spacing: 0.5px;">{role}</span>
                 </div>
             </div>
             """,
             unsafe_allow_html=True,
         )
 
-        # Quick Role Switcher / Login Form for Viva Evaluation
-        with st.expander("🔐 Switch User / Role", expanded=False):
-            sel_role = st.selectbox("Switch Role Profile", ["OPERATOR", "ADMIN", "VIEWER"], index=["OPERATOR", "ADMIN", "VIEWER"].index(role))
+        # Quick Role Switcher / Login Form
+        with st.expander("🔐 Security Role Switcher", expanded=False):
+            sel_role = st.selectbox("Switch Active Role", ["ADMIN", "OPERATOR", "VIEWER"], index=["ADMIN", "OPERATOR", "VIEWER"].index(role) if role in ["ADMIN", "OPERATOR", "VIEWER"] else 0)
             if sel_role != role:
                 st.session_state.user_role = sel_role
                 st.session_state.username = sel_role.lower()
+                st.rerun()
                 st.rerun()
 
             u_in = st.text_input("Username", key="nav_u_in")

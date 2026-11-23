@@ -4,48 +4,66 @@ import streamlit as st
 
 
 def inject_custom_theme() -> None:
-    """Injects high-end industrial dark styling into the Streamlit session."""
+    """Injects high-end industrial dark styling and Google typography into the Streamlit session."""
     st.markdown(
         """
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Orbitron:wght@600;700;800;900&family=Rajdhani:wght@500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+
         <style>
             /* Global theme overrides */
-            .main .block-container {
-                padding-top: 1.5rem;
-                padding-bottom: 2rem;
-                max-width: 96%;
+            html, body, [class*="css"] {
+                font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
             }
-            
+
+            .main .block-container {
+                padding-top: 1.0rem;
+                padding-bottom: 2rem;
+                max-width: 98%;
+            }
+
+            /* Technical headers */
+            h1, h2, h3 {
+                font-family: 'Space Grotesk', 'Orbitron', sans-serif !important;
+                letter-spacing: -0.3px;
+            }
+
             /* Industrial KPI Cards */
             .industry-kpi {
-                background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);
-                border: 1px solid #334155;
+                background: linear-gradient(135deg, #090e1a 0%, #111a2e 100%);
+                border: 1px solid rgba(0, 240, 255, 0.2);
                 border-left: 4px solid #00F0FF;
-                border-radius: 8px;
+                border-radius: 10px;
                 padding: 14px 16px;
                 color: #F8FAFC;
                 margin-bottom: 12px;
-                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
-                transition: transform 0.15s ease, border-color 0.15s ease;
+                box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+                transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
             }
             .industry-kpi:hover {
                 transform: translateY(-2px);
                 border-color: #00F0FF;
+                box-shadow: 0 6px 20px rgba(0, 240, 255, 0.15);
             }
             .kpi-label {
-                font-size: 11px;
+                font-family: 'Rajdhani', sans-serif;
+                font-size: 12px;
                 text-transform: uppercase;
-                letter-spacing: 0.05em;
+                letter-spacing: 0.08em;
                 color: #94A3B8;
-                font-weight: 600;
+                font-weight: 700;
                 margin-bottom: 4px;
             }
             .kpi-main-val {
-                font-size: 24px;
+                font-family: 'Rajdhani', monospace;
+                font-size: 26px;
                 font-weight: 700;
-                color: #F8FAFC;
+                color: #00F0FF;
                 display: flex;
                 align-items: baseline;
                 gap: 6px;
+                text-shadow: 0 0 10px rgba(0, 240, 255, 0.3);
             }
             .kpi-unit-val {
                 font-size: 12px;
@@ -63,16 +81,23 @@ def inject_custom_theme() -> None:
                 font-weight: 600;
             }
 
+            /* Keyframes */
+            @keyframes pulse {
+                0%, 100% { opacity: 1; transform: scale(1); }
+                50% { opacity: 0.4; transform: scale(0.92); }
+            }
+
             /* Provenance Badges */
             .badge-provenance {
                 display: inline-block;
-                font-size: 9px;
+                font-family: 'Rajdhani', sans-serif;
+                font-size: 10px;
                 font-weight: 700;
                 text-transform: uppercase;
-                padding: 2px 6px;
+                padding: 2px 7px;
                 border-radius: 4px;
                 margin-top: 6px;
-                letter-spacing: 0.03em;
+                letter-spacing: 0.04em;
             }
             .badge-measured { background-color: #059669; color: #FFFFFF; }
             .badge-simulated { background-color: #0284C7; color: #FFFFFF; }
@@ -94,8 +119,8 @@ def inject_custom_theme() -> None:
 
             /* Recommendation Cards */
             .rec-card {
-                background: #0F172A;
-                border: 1px solid #1E293B;
+                background: #090e1a;
+                border: 1px solid rgba(0, 240, 255, 0.15);
                 border-radius: 8px;
                 padding: 16px;
                 margin-bottom: 14px;
@@ -108,17 +133,22 @@ def inject_custom_theme() -> None:
             /* Action buttons */
             .stButton>button {
                 border-radius: 6px;
-                font-weight: 600;
+                font-family: 'Rajdhani', sans-serif;
+                font-weight: 700;
+                font-size: 13px;
+                letter-spacing: 0.5px;
                 transition: all 0.2s ease;
+                border: 1px solid rgba(0, 240, 255, 0.25);
             }
             .stButton>button:hover {
-                box-shadow: 0 0 10px rgba(0, 240, 255, 0.3);
+                box-shadow: 0 0 14px rgba(0, 240, 255, 0.4);
+                border-color: #00F0FF;
             }
 
             /* Dataframes */
             .stDataFrame {
-                border: 1px solid #1E293B;
-                border-radius: 6px;
+                border: 1px solid rgba(0, 240, 255, 0.15);
+                border-radius: 8px;
             }
         </style>
         """,
