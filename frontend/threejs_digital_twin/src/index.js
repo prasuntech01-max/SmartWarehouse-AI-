@@ -36,11 +36,11 @@ const COL_DARK_BG = 0x0d1420;
 
 const CAMERA_PRESETS = {
   CINEMATIC: { pos: [75, 55, 75], target: [TOTAL_W / 2, 0, TOTAL_D / 2] },
-  ISO:       { pos: [90, 60, 90], target: [TOTAL_W / 2, 0, TOTAL_D / 2] },
-  TOP:       { pos: [TOTAL_W / 2, 80, TOTAL_D / 2], target: [TOTAL_W / 2, 0, TOTAL_D / 2] },
-  AISLE:     { pos: [GRID_OX + 5 * CELL, 1.7, GRID_OZ + 1], target: [GRID_OX + 5 * CELL, 1.7, GRID_OZ + 14 * CELL] },
-  DOCK:      { pos: [TOTAL_W / 2, 8, TOTAL_D - 5], target: [TOTAL_W / 2, 4, TOTAL_D] },
-  HERO:      { pos: [GRID_OX + 7 * CELL + 4, 3, GRID_OZ + 7 * CELL + 4], target: [GRID_OX + 7 * CELL, 0.6, GRID_OZ + 7 * CELL] },
+  ISO: { pos: [90, 60, 90], target: [TOTAL_W / 2, 0, TOTAL_D / 2] },
+  TOP: { pos: [TOTAL_W / 2, 80, TOTAL_D / 2], target: [TOTAL_W / 2, 0, TOTAL_D / 2] },
+  AISLE: { pos: [GRID_OX + 5 * CELL, 1.7, GRID_OZ + 1], target: [GRID_OX + 5 * CELL, 1.7, GRID_OZ + 14 * CELL] },
+  DOCK: { pos: [TOTAL_W / 2, 8, TOTAL_D - 5], target: [TOTAL_W / 2, 4, TOTAL_D] },
+  HERO: { pos: [GRID_OX + 7 * CELL + 4, 3, GRID_OZ + 7 * CELL + 4], target: [GRID_OX + 7 * CELL, 0.6, GRID_OZ + 7 * CELL] },
   DIGITAL_TWIN: { pos: [60, 45, 60], target: [TOTAL_W / 2, 5, TOTAL_D / 2] },
 };
 
@@ -236,6 +236,22 @@ function makeFloorMarkingsTexture() {
     }
     ctx.setLineDash([]);
 
+    // Glowing cyan intersection waypoints (cyber navigation nodes)
+    for (let c = 0; c < GRID_COLS; c += 2) {
+      for (let r = 0; r < GRID_ROWS; r += 2) {
+        const isRack = Y_BLOCKS.some(([y0, y1]) => r >= y0 && r <= y1) && X_BLOCKS.some(([x0, x1]) => c >= x0 && c <= x1);
+        if (!isRack) {
+          const nx = (GRID_OX + c * CELL + CELL / 2) * sx;
+          const ny = (GRID_OZ + r * CELL + CELL / 2) * sy;
+          ctx.fillStyle = '#00e5ff';
+          ctx.beginPath(); ctx.arc(nx, ny, 3, 0, Math.PI * 2); ctx.fill();
+          ctx.strokeStyle = 'rgba(0, 229, 255, 0.45)';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath(); ctx.arc(nx, ny, 7, 0, Math.PI * 2); ctx.stroke();
+        }
+      }
+    }
+
     // Zone codes
     ctx.font = 'bold 18px sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -413,8 +429,8 @@ function initMaterials() {
   floorTex.wrapS = floorTex.wrapT = THREE.RepeatWrapping;
   floorTex.repeat.set(8, 8);
 
-  materials.floor = new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.55, metalness: 0.1 });
-  materials.floorNight = new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.2, metalness: 0.4, envMapIntensity: 1.5 });
+  materials.floor = new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.32, metalness: 0.28 });
+  materials.floorNight = new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.18, metalness: 0.45, envMapIntensity: 1.8 });
 
   materials.concrete = new THREE.MeshStandardMaterial({ color: 0x9e9e9e, roughness: 0.8 });
   materials.steel = new THREE.MeshStandardMaterial({ color: 0x78909c, roughness: 0.35, metalness: 0.8 });
@@ -953,6 +969,20 @@ function buildLighting(scene) {
   const ambLight = new THREE.AmbientLight(0x404050, 0.3);
   scene.add(ambLight);
   state.ambientLight = ambLight;
+
+  // 4. Cyber Accent Spotlights (Conveyor & Dispatch Zone Cyan Glow)
+  const dockSpot = new THREE.SpotLight(0x00e5ff, 1.2, 55, Math.PI / 4, 0.45, 1.0);
+  dockSpot.position.set(TOTAL_W / 2, HALL_H - 1.2, TOTAL_D - 12);
+  dockSpot.target.position.set(TOTAL_W / 2, 0, TOTAL_D - 4);
+  scene.add(dockSpot);
+  scene.add(dockSpot.target);
+
+  // 5. Violet/Magenta Atmospheric Rack Backlight
+  const rackVioletSpot = new THREE.SpotLight(0xa855f7, 0.85, 50, Math.PI / 3, 0.5, 1.0);
+  rackVioletSpot.position.set(GRID_OX + 5 * CELL, HALL_H - 1.2, GRID_OZ);
+  rackVioletSpot.target.position.set(GRID_OX + 5 * CELL, 0, GRID_OZ + 7 * CELL);
+  scene.add(rackVioletSpot);
+  scene.add(rackVioletSpot.target);
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -1710,6 +1740,171 @@ function buildKPIDisplay(scene) {
   scene.add(kpiMesh);
   state.kpiMesh = kpiMesh;
   state.kpiTexture = kpiTex;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   §17B  HOLOGRAPHIC FLOATING ZONE HUD & ATMOSPHERIC PARTICLES
+   ═══════════════════════════════════════════════════════════════ */
+
+function buildFloatingZoneHUD(scene) {
+  const hudGroup = new THREE.Group();
+  hudGroup.name = 'floatingZoneHUD';
+
+  const zones = [
+    {
+      title: 'ZONE A • HIGH-BAY STORAGE',
+      desc: 'ASRS AUTOMATED PALLET RACKS • LEVELS 1-6',
+      status: '● STORAGE 88% UTILIZED',
+      pos: [GRID_OX + 4.5 * CELL, 6.8, GRID_OZ + 4 * CELL],
+      color: '#00e5ff',
+    },
+    {
+      title: 'ZONE B • INVENTORY & SORTING',
+      desc: 'CONVEYOR FEED • MULTI-TIER SORTING CELL',
+      status: '● SORTING ACTIVE (60 PPM)',
+      pos: [GRID_OX + 10.5 * CELL, 6.8, GRID_OZ + 9 * CELL],
+      color: '#38bdf8',
+    },
+    {
+      title: 'ZONE C • ROBOTIC PICKING & PACKING',
+      desc: 'ARTICULATED DUAL-ARM CELLS 01-04',
+      status: '● ROBOTIC PICK ACTIVE',
+      pos: [GRID_OX + 6 * CELL, 5.8, GRID_OZ + 14 * CELL + 3],
+      color: '#a855f7',
+    },
+    {
+      title: 'ZONE D • DISPATCH & DOCK BAYS',
+      desc: 'AUTOMATED AGV/AMR PALLET DOCKS 01-04',
+      status: '● 4 BAYS OPERATIONAL',
+      pos: [TOTAL_W / 2, 6.2, TOTAL_D - 12],
+      color: '#10b981',
+    },
+    {
+      title: 'ZONE E • FLEET CHARGING & TELEMETRY',
+      desc: 'INDUCTION CHARGE PADS 01-05 • 48V DC FAST',
+      status: '● 5/5 UNITS MONITORED',
+      pos: [GRID_OX + 7 * CELL, 5.2, GRID_OZ - 2.5],
+      color: '#00e5ff',
+    },
+  ];
+
+  zones.forEach((z, i) => {
+    const tex = makeCanvasTex(512, 180, (ctx, w, h) => {
+      ctx.clearRect(0, 0, w, h);
+      ctx.fillStyle = 'rgba(7, 17, 31, 0.78)';
+      ctx.beginPath();
+      ctx.roundRect(10, 10, w - 20, h - 20, 12);
+      ctx.fill();
+      ctx.strokeStyle = z.color;
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(8, 26); ctx.lineTo(8, 8); ctx.lineTo(26, 8); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(w - 26, 8); ctx.lineTo(w - 8, 8); ctx.lineTo(w - 8, 26); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(8, h - 26); ctx.lineTo(8, h - 8); ctx.lineTo(26, h - 8); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(w - 26, h - 8); ctx.lineTo(w - 8, h - 8); ctx.lineTo(w - 8, h - 26); ctx.stroke();
+
+      ctx.font = 'bold 22px "Orbitron", "Space Grotesk", sans-serif';
+      ctx.fillStyle = z.color;
+      ctx.fillText(z.title, 28, 48);
+
+      ctx.font = '16px "Rajdhani", sans-serif';
+      ctx.fillStyle = '#cbd5e1';
+      ctx.fillText(z.desc, 28, 86);
+
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+      ctx.beginPath();
+      ctx.roundRect(28, 110, 260, 36, 8);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      ctx.font = 'bold 15px "Rajdhani", sans-serif';
+      ctx.fillStyle = '#10b981';
+      ctx.fillText(z.status, 42, 134);
+    });
+
+    const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide });
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(6.5, 2.3), mat);
+    mesh.position.set(...z.pos);
+    mesh.userData.baseY = z.pos[1];
+    mesh.userData.floatOffset = i * 1.2;
+    mesh.userData.isFloatingHUD = true;
+    hudGroup.add(mesh);
+
+    const tetherGeo = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0, -1.15, 0),
+      new THREE.Vector3(0, -z.pos[1] + 0.1, 0)
+    ]);
+    const tetherMat = new THREE.LineDashedMaterial({
+      color: new THREE.Color(z.color),
+      dashSize: 0.25,
+      gapSize: 0.15,
+      transparent: true,
+      opacity: 0.45
+    });
+    const tether = new THREE.Line(tetherGeo, tetherMat);
+    tether.computeLineDistances();
+    mesh.add(tether);
+  });
+
+  scene.add(hudGroup);
+  state.groups.floatingZoneHUD = hudGroup;
+}
+
+function buildEnvironmentalParticles(scene) {
+  const count = 180;
+  const geo = new THREE.BufferGeometry();
+  const positions = new Float32Array(count * 3);
+  const colors = new Float32Array(count * 3);
+
+  const col1 = new THREE.Color(0x00e5ff);
+  const col2 = new THREE.Color(0xa855f7);
+  const col3 = new THREE.Color(0x168bff);
+
+  for (let i = 0; i < count; i++) {
+    positions[i * 3 + 0] = Math.random() * TOTAL_W;
+    positions[i * 3 + 1] = 0.5 + Math.random() * (HALL_H - 1.5);
+    positions[i * 3 + 2] = Math.random() * TOTAL_D;
+
+    const pick = Math.random();
+    const c = pick < 0.6 ? col1 : pick < 0.85 ? col3 : col2;
+    colors[i * 3 + 0] = c.r;
+    colors[i * 3 + 1] = c.g;
+    colors[i * 3 + 2] = c.b;
+  }
+
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+  const pTex = makeCanvasTex(64, 64, (ctx, w, h) => {
+    ctx.clearRect(0, 0, w, h);
+    const grad = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
+    grad.addColorStop(0, 'rgba(255, 255, 255, 1)');
+    grad.addColorStop(0.3, 'rgba(0, 229, 255, 0.8)');
+    grad.addColorStop(0.7, 'rgba(0, 229, 255, 0.2)');
+    grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, h);
+  });
+
+  const mat = new THREE.PointsMaterial({
+    size: 0.25,
+    map: pTex,
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.65,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+
+  const particles = new THREE.Points(geo, mat);
+  particles.name = 'envParticles';
+  scene.add(particles);
+  state.envParticles = particles;
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -3484,6 +3679,27 @@ function animate() {
     if (state.activeTheme === 'wireframe' && state.scanlinePlane) {
       state.scanlinePlane.position.z = (state.animTime * 10) % TOTAL_D;
     }
+
+    // Animate floating holographic zone HUD
+    if (state.groups.floatingZoneHUD) {
+      state.groups.floatingZoneHUD.children.forEach(hud => {
+        if (hud.userData && hud.userData.isFloatingHUD) {
+          hud.position.y = hud.userData.baseY + Math.sin(state.animTime * 1.5 + hud.userData.floatOffset) * 0.18;
+        }
+      });
+    }
+
+    // Animate atmospheric environmental particles
+    if (state.envParticles && state.envParticles.geometry) {
+      const posAttr = state.envParticles.geometry.attributes.position;
+      const count = posAttr.count;
+      for (let i = 0; i < count; i++) {
+        let py = posAttr.getY(i) + Math.sin(state.animTime + i) * 0.006;
+        if (py > HALL_H - 1.0) py = 0.5;
+        posAttr.setY(i, py);
+      }
+      posAttr.needsUpdate = true;
+    }
   }
 
   // Update camera
@@ -3689,6 +3905,10 @@ async function init() {
   buildSafetyInfra(scene);
   buildSignage(scene);
   buildKPIDisplay(scene);
+
+  // Floating Holographic Zone HUD & Environmental Particles
+  buildFloatingZoneHUD(scene);
+  buildEnvironmentalParticles(scene);
 
   // Overlays
   buildOverlayGroup(scene);

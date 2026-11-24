@@ -1,6 +1,7 @@
 """Reusable visual components for SmartWarehouse AI."""
 
 import html
+import textwrap
 import streamlit as st
 from typing import Optional, Any
 from analytics.models import ProvenanceType
@@ -37,18 +38,13 @@ def render_kpi_card(
     badge_html = render_provenance_badge(provenance) if provenance else ""
     help_html = f'<div style="font-size: 10px; color: #64748B; margin-top: 4px;">{html.escape(help_text)}</div>' if help_text else ""
 
-    card_html = f"""
-    <div class="industry-kpi">
-        <div class="kpi-label">{html.escape(title)}</div>
-        <div class="kpi-main-val">
-            {html.escape(str(value))}
-            <span class="kpi-unit-val">{html.escape(unit)}</span>
-        </div>
-        {delta_html}
-        {badge_html}
-        {help_html}
-    </div>
-    """
+    card_html = (
+        f'<div class="industry-kpi">'
+        f'<div class="kpi-label">{html.escape(title)}</div>'
+        f'<div class="kpi-main-val">{html.escape(str(value))} <span class="kpi-unit-val">{html.escape(unit)}</span></div>'
+        f'{delta_html}{badge_html}{help_html}'
+        f'</div>'
+    )
     st.markdown(card_html, unsafe_allow_html=True)
 
 
@@ -106,13 +102,13 @@ def render_global_search_bar(sim: Any) -> None:
                 st.markdown(f"**Found {len(matches)} matching result(s):**")
                 for kind, ident, details in matches:
                     st.markdown(
-                        f"""
+                        textwrap.dedent(f"""
                         <div style="background: #0F172A; border-left: 3px solid #00F0FF; padding: 6px 12px; margin-bottom: 6px; border-radius: 4px;">
                             <span style="color: #38BDF8; font-weight: 700; font-size: 11px;">[{kind.upper()}]</span>
                             <strong style="color: #F8FAFC; margin-left: 6px;">{ident}</strong>
                             <span style="color: #94A3B8; font-size: 12px; margin-left: 10px;">{details}</span>
                         </div>
-                        """,
+                        """).strip(),
                         unsafe_allow_html=True,
                     )
             else:
@@ -131,13 +127,13 @@ def render_notification_tray(events: Optional[list] = None) -> None:
         for it in items:
             color = "#10B981" if it["type"] == "SUCCESS" else "#38BDF8" if it["type"] == "INFO" else "#F59E0B"
             st.markdown(
-                f"""
+                textwrap.dedent(f"""
                 <div style="display: flex; gap: 8px; font-size: 12px; padding: 4px 0; border-bottom: 1px solid #1E293B;">
                     <span style="color: #64748B; font-family: monospace;">[{it['time']}]</span>
                     <span style="color: {color}; font-weight: 700;">[{it['type']}]</span>
                     <span style="color: #CBD5E1;">{it['msg']}</span>
                 </div>
-                """,
+                """).strip(),
                 unsafe_allow_html=True,
             )
 
@@ -145,7 +141,7 @@ def render_notification_tray(events: Optional[list] = None) -> None:
 def render_robot_inspector_drawer(robot: Any, robot_id: int) -> None:
     """Renders detailed diagnostics and status drawer for a single selected robot."""
     st.markdown(
-        f"""
+        textwrap.dedent(f"""
         <div style="background: #0B132B; border: 1px solid #1E293B; border-radius: 8px; padding: 14px; margin-top: 10px;">
             <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1E293B; padding-bottom: 8px; margin-bottom: 10px;">
                 <h4 style="margin: 0; color: #00F0FF;">🤖 Autonomous Mobile Robot R{robot_id} (AMR-500)</h4>
@@ -158,6 +154,6 @@ def render_robot_inspector_drawer(robot: Any, robot_id: int) -> None:
                 <div><span style="color: #64748B;">Tasks Completed:</span><br><strong style="color: #38BDF8;">{getattr(robot, 'completed_tasks', 0)}</strong></div>
             </div>
         </div>
-        """,
+        """).strip(),
         unsafe_allow_html=True,
     )

@@ -12,9 +12,32 @@ def inject_custom_theme() -> None:
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Orbitron:wght@600;700;800;900&family=Rajdhani:wght@500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
 
         <style>
-            /* Global theme overrides */
+            /* ── Global Theme Overrides & Immersive Warehouse Command Environment ── */
             html, body, [class*="css"] {
                 font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            }
+
+            /* Immersive Multi-Layered Industrial Background */
+            .stApp {
+                background-color: #07111F !important;
+                background-image: 
+                    radial-gradient(circle at 18% 12%, rgba(0, 229, 255, 0.08) 0%, transparent 45%),
+                    radial-gradient(circle at 85% 15%, rgba(168, 85, 247, 0.08) 0%, transparent 40%),
+                    radial-gradient(circle at 50% 90%, rgba(22, 139, 255, 0.09) 0%, transparent 55%),
+                    linear-gradient(rgba(0, 229, 255, 0.025) 1px, transparent 1px),
+                    linear-gradient(90deg, rgba(0, 229, 255, 0.025) 1px, transparent 1px),
+                    linear-gradient(180deg, #07111F 0%, #091326 50%, #050B16 100%) !important;
+                background-size: 100% 100%, 100% 100%, 100% 100%, 48px 48px, 48px 48px, 100% 100% !important;
+                background-attachment: fixed !important;
+            }
+
+            /* Translucent Glassmorphic Sidebar with Cyber Border */
+            section[data-testid="stSidebar"] {
+                background: linear-gradient(180deg, rgba(7, 17, 31, 0.95) 0%, rgba(9, 15, 30, 0.97) 100%) !important;
+                border-right: 1px solid rgba(0, 229, 255, 0.22) !important;
+                box-shadow: 4px 0 24px rgba(0, 0, 0, 0.5) !important;
+                backdrop-filter: blur(20px) !important;
+                -webkit-backdrop-filter: blur(20px) !important;
             }
 
             .main .block-container {
@@ -27,24 +50,27 @@ def inject_custom_theme() -> None:
             h1, h2, h3 {
                 font-family: 'Space Grotesk', 'Orbitron', sans-serif !important;
                 letter-spacing: -0.3px;
+                color: #F8FAFC !important;
             }
 
-            /* Industrial KPI Cards */
+            /* Industrial KPI Cards with Glassmorphism */
             .industry-kpi {
-                background: linear-gradient(135deg, #090e1a 0%, #111a2e 100%);
-                border: 1px solid rgba(0, 240, 255, 0.2);
-                border-left: 4px solid #00F0FF;
+                background: linear-gradient(135deg, rgba(11, 19, 43, 0.88) 0%, rgba(9, 14, 28, 0.92) 100%);
+                border: 1px solid rgba(0, 229, 255, 0.22);
+                border-left: 4px solid #00E5FF;
                 border-radius: 10px;
                 padding: 14px 16px;
                 color: #F8FAFC;
                 margin-bottom: 12px;
-                box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
-                transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+                box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+                backdrop-filter: blur(12px);
+                -webkit-backdrop-filter: blur(12px);
+                transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
             }
             .industry-kpi:hover {
                 transform: translateY(-2px);
-                border-color: #00F0FF;
-                box-shadow: 0 6px 20px rgba(0, 240, 255, 0.15);
+                border-color: #00E5FF;
+                box-shadow: 0 10px 28px rgba(0, 229, 255, 0.2);
             }
             .kpi-label {
                 font-family: 'Rajdhani', sans-serif;
@@ -147,8 +173,26 @@ def inject_custom_theme() -> None:
 
             /* Dataframes */
             .stDataFrame {
-                border: 1px solid rgba(0, 240, 255, 0.15);
+                border: 1px solid rgba(0, 229, 255, 0.2);
                 border-radius: 8px;
+                backdrop-filter: blur(12px);
+                background: rgba(11, 19, 43, 0.75);
+            }
+
+            /* Custom Industrial Scrollbar */
+            ::-webkit-scrollbar {
+                width: 6px;
+                height: 6px;
+            }
+            ::-webkit-scrollbar-track {
+                background: #07111F;
+            }
+            ::-webkit-scrollbar-thumb {
+                background: rgba(0, 229, 255, 0.35);
+                border-radius: 3px;
+            }
+            ::-webkit-scrollbar-thumb:hover {
+                background: #00E5FF;
             }
         </style>
         """,

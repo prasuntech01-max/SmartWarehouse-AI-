@@ -60,30 +60,26 @@ def render_fleet_page(sim: Any, ai_engine: Any, analytics_service: AnalyticsServ
             health_val = m.get("health_score", {}).value or 100
             info = fleet_meta.get(r_id, {"name": f"Robot {r_id}", "type": "AMR", "color": "#00F0FF", "duty": "Standard"})
             status_color = "#10B981" if health_val >= 80 else "#F59E0B" if health_val >= 60 else "#EF4444"
-            st.markdown(
-                f"""
-                <div class="industry-kpi" style="border-left-color: {info['color']};">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <span style="font-family: 'Orbitron', sans-serif; font-size: 13px; font-weight: 800; color: {info['color']};">0{r_id} {info['name']}</span>
-                        <span style="font-size: 10px; font-weight: 800; color: {status_color}; background: rgba(16, 185, 129, 0.15); padding: 2px 6px; border-radius: 4px;">{r.state}</span>
-                    </div>
-                    <div style="font-size: 11px; color: #94A3B8; margin-top: 2px; font-weight: 600;">
-                        {info['type']} &bull; {info['duty']}
-                    </div>
-                    <div style="margin: 8px 0; font-size: 22px; font-weight: 700; color: #FFFFFF; font-family: 'Rajdhani', monospace;">
-                        {health_val:.0f} <span style="font-size: 11px; color: #94A3B8;">/100 Health</span>
-                    </div>
-                    <div style="font-size: 12px; color: #CBD5E1; line-height: 1.6;">
-                        🔋 Battery: <strong>{r.battery:.1f}%</strong><br>
-                        📍 Position: <strong>{r.pos}</strong><br>
-                        🎯 Target: <strong>{r.goal or 'Docked'}</strong><br>
-                        📦 Completed: <strong>{r.completed_tasks} tasks</strong><br>
-                        📏 Travelled: <strong>{r.total_distance}m</strong>
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
+            card_html = (
+                f'<div class="industry-kpi" style="border-left-color: {info["color"]};">'
+                f'<div style="display: flex; justify-content: space-between; align-items: center;">'
+                f'<span style="font-family: \'Orbitron\', sans-serif; font-size: 13px; font-weight: 800; color: {info["color"]};">0{r_id} {info["name"]}</span>'
+                f'<span style="font-size: 10px; font-weight: 800; color: {status_color}; background: rgba(16, 185, 129, 0.15); padding: 2px 6px; border-radius: 4px;">{r.state}</span>'
+                f'</div>'
+                f'<div style="font-size: 11px; color: #94A3B8; margin-top: 2px; font-weight: 600;">{info["type"]} &bull; {info["duty"]}</div>'
+                f'<div style="margin: 8px 0; font-size: 22px; font-weight: 700; color: #FFFFFF; font-family: \'Rajdhani\', monospace;">'
+                f'{health_val:.0f} <span style="font-size: 11px; color: #94A3B8;">/100 Health</span>'
+                f'</div>'
+                f'<div style="font-size: 12px; color: #CBD5E1; line-height: 1.6;">'
+                f'🔋 Battery: <strong>{r.battery:.1f}%</strong><br>'
+                f'📍 Position: <strong>{r.pos}</strong><br>'
+                f'🎯 Target: <strong>{r.goal or "Docked"}</strong><br>'
+                f'📦 Completed: <strong>{r.completed_tasks} tasks</strong><br>'
+                f'📏 Travelled: <strong>{r.total_distance}m</strong>'
+                f'</div>'
+                f'</div>'
             )
+            st.markdown(card_html, unsafe_allow_html=True)
 
     st.divider()
     st.markdown("#### 🔬 Detailed AMR Telemetry & Component Inspection")
