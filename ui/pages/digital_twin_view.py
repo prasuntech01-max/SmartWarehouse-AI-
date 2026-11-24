@@ -16,6 +16,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from ui.components import render_section_header
+from ui.sound_panel import get_sound_settings, render_sound_control_panel
 from visualization.renderer_3d import Warehouse3DRenderer
 from visualization.renderer import WarehouseRenderer
 from visualization.threejs_bridge import build_simulation_state
@@ -99,6 +100,7 @@ def _render_threejs(sim: Any, ai_engine: Any,
         sensors=sample_sensors if show_sensors else [],
         hazards=hazard_zones,
         uptime_start=_get_uptime_start(),
+        sound_settings=get_sound_settings(),
     )
     state_json = json.dumps(state, separators=(',', ':'))
 
@@ -174,6 +176,9 @@ def render_digital_twin_page(sim: Any, ai_engine: Any) -> None:
         with lcol4:
             show_sensors = st.checkbox("IoT Sensor Discs",   value=True)
             show_hazards = st.checkbox("Hazard Zones (Alert)", value=True)
+
+    with st.expander("🔊 Futuristic Sound Control Panel", expanded=False):
+        render_sound_control_panel(key_prefix="dt_snd")
 
     # ── Render selection ──────────────────────────────────────────────────────
     if "Three.js" in display_mode:

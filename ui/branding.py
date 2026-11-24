@@ -9,7 +9,7 @@ import base64
 import time
 import textwrap
 import streamlit as st
-from typing import Optional
+from typing import Any, Optional
 
 
 def get_3d_metallic_logo_svg_raw(width: int = 640, height: int = 220) -> str:
@@ -184,3 +184,43 @@ def render_enterprise_header() -> None:
 </div>"""
 
     st.markdown(header_html, unsafe_allow_html=True)
+
+
+def render_global_emergency_banner(sim: Any) -> None:
+    """Renders a persistent pulsing red emergency banner whenever E-Stop is genuinely active."""
+    is_global = bool(getattr(sim, "global_e_stop", False))
+    robots = getattr(sim, "robots", {}) or {}
+    stopped_ids = [
+        rid for rid, r in sorted(robots.items())
+        if getattr(r, "e_stopped", False) or str(getattr(r, "state", "")).upper() in ("E_STOPPED", "EMERGENCY")
+    ]
+    if not is_global and not stopped_ids:
+        return
+
+    scope_str = (
+        f"ALL FLEET UNITS HALTED ({len(stopped_ids)}/{len(robots)})"
+        if is_global or len(stopped_ids) == len(robots)
+        else f"AFFECTED UNITS: {', '.join(f'R{rid}' for rid in stopped_ids)}"
+    )
+    banner_html = (
+        '<style>'
+        '@keyframes swEmgPulse{0%,100%{box-shadow:0 0 18px rgba(239,68,68,0.55);border-color:#ef4444;}50%{box-shadow:0 0 32px rgba(239,68,68,0.9);border-color:#fca5a5;}}'
+        '@keyframes swEmgDot{0%,100%{opacity:1;transform:scale(1);}50%{opacity:0.35;transform:scale(1.3);}}'
+        '.sw-emg-banner{background:linear-gradient(90deg,rgba(127,29,29,0.94) 0%,rgba(153,27,27,0.90) 50%,rgba(127,29,29,0.94) 100%);border:2px solid #ef4444;border-radius:10px;padding:12px 18px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;animation:swEmgPulse 1.4s ease-in-out infinite;}'
+        '.sw-emg-dot{width:11px;height:11px;border-radius:50%;background:#ff2e4c;box-shadow:0 0 12px #ff2e4c;display:inline-block;animation:swEmgDot 0.9s ease-in-out infinite;}'
+        '</style>'
+        '<div class="sw-emg-banner" data-testid="global-emergency-banner">'
+        '<div style="display:flex;align-items:center;gap:12px;">'
+        '<span style="font-size:22px;">🚨</span>'
+        '<div>'
+        '<div style="display:flex;align-items:center;gap:8px;">'
+        '<span class="sw-emg-dot"></span>'
+        '<span style="font-family:Orbitron,sans-serif;font-size:14px;font-weight:800;color:#ffffff;letter-spacing:1.2px;">EMERGENCY ACTIVE — SAFETY INTERLOCK ENGAGED</span>'
+        '</div>'
+        f'<div style="font-size:12px;color:#fecaca;margin-top:2px;font-weight:600;">{scope_str} &bull; Autonomous motion &amp; dispatch suspended until operator clears emergency via RESUME ALL / START ALL.</div>'
+        '</div>'
+        '</div>'
+        '<span style="background:#ef4444;color:#ffffff;font-size:11px;font-weight:800;padding:4px 12px;border-radius:6px;letter-spacing:0.8px;border:1px solid #fecaca;">E-STOP LOCKED</span>'
+        '</div>'
+    )
+    st.markdown(banner_html, unsafe_allow_html=True)

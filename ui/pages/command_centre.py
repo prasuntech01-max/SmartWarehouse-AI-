@@ -367,14 +367,18 @@ def render_command_centre_view(sim: Any, ai_engine: Any, analytics_service: Anal
             bat_pct = bot_obj.battery if bot_obj and hasattr(bot_obj, "battery") else r_info["bat"]
             state_disp = bot_obj.state if bot_obj and hasattr(bot_obj, "state") else r_info["status"]
             mode_disp = bot_obj.mode if bot_obj and hasattr(bot_obj, "mode") else "AUTO"
+            is_estopped = bool(getattr(bot_obj, "e_stopped", False)) or state_disp in ("E_STOPPED", "EMERGENCY")
+            row_style = "border-color: rgba(239, 68, 68, 0.8); background: rgba(127, 29, 29, 0.35); box-shadow: 0 0 12px rgba(239, 68, 68, 0.25);" if is_estopped else ""
+            badge_color = "#ef4444" if is_estopped else "#10b981"
+            badge_bg = "rgba(239, 68, 68, 0.22)" if is_estopped else "rgba(16, 185, 129, 0.15)"
             carrying_str = f" • 📦 Carrying {bot_obj.carrying_parcel.parcel_id}" if (bot_obj and bot_obj.carrying_parcel) else ""
 
             st.markdown(
                 f"""
-                <div class="sw-fleet-row">
+                <div class="sw-fleet-row" style="{row_style}">
                     <div>
                         <div style="display: flex; align-items: center; gap: 6px;">
-                            <span class="sw-robot-id">0{rid} {r_info['name']}</span>
+                            <span class="sw-robot-id" style="{'color:#fca5a5;' if is_estopped else ''}">{'🚨 ' if is_estopped else ''}0{rid} {r_info['name']}</span>
                             <span class="sw-robot-role">({r_info['type']} • {mode_disp})</span>
                         </div>
                         <div style="font-size: 10px; color: #cbd5e1; margin-top: 2px;">
@@ -382,7 +386,7 @@ def render_command_centre_view(sim: Any, ai_engine: Any, analytics_service: Anal
                         </div>
                     </div>
                     <div style="text-align: right;">
-                        <span style="font-size: 11px; font-weight: 700; color: #10b981; background: rgba(16, 185, 129, 0.15); padding: 1px 6px; border-radius: 4px;">
+                        <span style="font-size: 11px; font-weight: 700; color: {badge_color}; background: {badge_bg}; padding: 1px 6px; border-radius: 4px;">
                             {state_disp}
                         </span>
                         <div style="font-size: 10px; color: #00f0ff; font-weight: 700; margin-top: 2px;">

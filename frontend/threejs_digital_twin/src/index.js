@@ -10,6 +10,8 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import soundEngine from './soundEngine.js';
+import voiceEngine from './voiceEngine.js';
 
 /* ═══════════════════════════════════════════════════════════════
    §0  CONSTANTS & CONFIG
@@ -54,7 +56,7 @@ const TOUR_STOPS = [
 
 const STATE_COLORS = {
   MOVING: COL_CYAN, IDLE: 0xffffff, WAITING: COL_AMBER,
-  BLOCKED: COL_RED, CHARGING: 0x2979ff, EMERGENCY: COL_RED,
+  BLOCKED: COL_RED, CHARGING: 0x2979ff, EMERGENCY: COL_RED, E_STOPPED: COL_RED,
 };
 
 /* ═══════════════════════════════════════════════════════════════
@@ -2976,7 +2978,20 @@ function initBridge() {
       return;
     }
 
-    const { step, robots: robotsData, tasks, parcels, metrics, paths, sensors, hazards, collisions, heatmap } = data;
+    const { step, robots: robotsData, tasks, parcels, metrics, paths, sensors, hazards, collisions, heatmap, sound_settings } = data;
+
+    // Apply Streamlit sound & voice settings if provided
+    if (sound_settings && typeof sound_settings === 'object') {
+      soundEngine.updateSettings(sound_settings);
+      voiceEngine.updateSettings(sound_settings);
+      syncAudioHUDFromEngine();
+    }
+
+    // Real event-based audio dispatch (deduplicated across Streamlit reruns via sessionStorage)
+    processSimulationAudioEvents(data);
+
+    // Sync persistent red emergency banner in 3D Twin viewport
+    updateEmergencyBanner(data);
 
     // Update HUD metrics
     if (step !== undefined) updateHUDMetric('dash-step', `Step: <strong>${step}</strong>`);
@@ -3077,6 +3092,407 @@ function initBridge() {
     setTheme: (t) => setTheme(t),
     setCamPreset: (p) => setCamPresetSmooth(p),
   };
+  window.__SW_SOUND = soundEngine;
+  window.__SW_VOICE = voiceEngine;
+}
+
+const SOUND_SNAPSHOT_KEY = 'sw_sound_last_sim_snapshot_v1';
+const ROBOT_SPOKEN_NAMES = {
+  1: 'Titan X',
+  2: 'Atlas',
+  3: 'Vortex',
+  4: 'Nova',
+  5: 'Spectre',
+};
+
+function processSimulationAudioEvents(data) {
+  const simTick = Number(data?.meta?.sim_tick ?? data?.step ?? 0);
+  const robotsList = Array.isArray(data?.robots) ? data.robots : [];
+  const obstacleCount = Array.isArray(data?.obstacles) ? data.obstacles.length : 0;
+
+  const curRobots = {};
+  for (const r of robotsList) {
+    curRobots[String(r.id)] = {
+      x: r.x,
+      y: r.y,
+      yaw: r.yaw || 0,
+      state: String(r.state || 'IDLE').toUpperCase(),
+      carrying: Boolean(r.carrying) || Boolean(r.carrying_parcel_id),
+      parcel_id: r.carrying_parcel_id ?? null,
+      tasks_done: Number(r.tasks_done || 0),
+      e_stopped: Boolean(r.e_stopped),
+      task_id: r.task_id ?? null,
+      replan_count: Number(r.replan_count || 0),
+      mode: String(r.mode || 'AUTO').toUpperCase(),
+      battery: Number(r.battery ?? 100),
+      collision_risk: Boolean(r.collision_risk) || (Array.isArray(r.blocked_by) && r.blocked_by.length > 0),
+    };
+  }
+
+  let prev = null;
+  try {
+    const raw = window.sessionStorage?.getItem(SOUND_SNAPSHOT_KEY);
+    if (raw) prev = JSON.parse(raw);
+  } catch (_) {}
+
+  const saveSnap = () => {
+    try {
+      window.sessionStorage?.setItem(SOUND_SNAPSHOT_KEY, JSON.stringify({ simTick, obstacleCount, robots: curRobots }));
+    } catch (_) {}
+  };
+
+  // First load or simulator reset: record baseline silently without firing spurious audio
+  if (!prev || simTick < Number(prev.simTick || 0)) {
+    saveSnap();
+    return;
+  }
+
+  let anyChange = simTick !== Number(prev.simTick || 0) || obstacleCount !== Number(prev.obstacleCount || 0);
+  let estopFired = false;
+
+  if (obstacleCount > Number(prev.obstacleCount || 0)) {
+    voiceEngine.announce(
+      'Obstacle detected in warehouse corridor. Dynamic route recalculation active.',
+      { category: 'emergency', priority: 3, dedupeKey: 'obs_inject', cooldownMs: 5000 }
+    );
+  }
+
+  for (const [idStr, cur] of Object.entries(curRobots)) {
+    const rid = Number(idStr);
+    const botName = ROBOT_SPOKEN_NAMES[rid] || `Robot ${rid}`;
+    const p = prev.robots?.[idStr];
+    if (!p) continue;
+
+    const moved = cur.x !== p.x || cur.y !== p.y;
+    const yawDiff = cur.yaw - (p.yaw || 0);
+    const turned = Math.abs(yawDiff) > 0.35;
+    const stateChanged = cur.state !== p.state;
+    const carryChanged = cur.carrying !== p.carrying;
+    const doneChanged = cur.tasks_done > (p.tasks_done || 0);
+    const estopChanged = cur.e_stopped && !p.e_stopped;
+    const estopCleared = !cur.e_stopped && p.e_stopped;
+    const taskChanged = !p.task_id && cur.task_id;
+    const modeChanged = cur.mode !== (p.mode || 'AUTO');
+    const replanChanged = cur.replan_count > (p.replan_count || 0);
+
+    if (moved || turned || stateChanged || carryChanged || doneChanged || estopChanged || estopCleared || taskChanged || modeChanged || replanChanged) {
+      anyChange = true;
+    }
+
+    // Priority 1: Emergency Stop & Safety
+    if ((estopChanged || (stateChanged && (cur.state === 'E_STOPPED' || cur.state === 'EMERGENCY'))) && !estopFired) {
+      soundEngine.playEmergencyStop();
+      voiceEngine.announce(
+        'Emergency stop activated. All autonomous robot motion halted.',
+        { category: 'emergency', priority: 3, dedupeKey: 'estop', cooldownMs: 4000 }
+      );
+      estopFired = true;
+      continue;
+    }
+
+    if (estopCleared) {
+      voiceEngine.announce(
+        'Emergency cleared. Normal warehouse operations may resume.',
+        { category: 'emergency', priority: 3, dedupeKey: 'eclear', cooldownMs: 4000 }
+      );
+    }
+
+    if (cur.collision_risk && !p.collision_risk) {
+      voiceEngine.announce(
+        `${botName} collision risk detected. Holding corridor.`,
+        { category: 'emergency', priority: 3, dedupeKey: `col_${rid}`, cooldownMs: 8000 }
+      );
+    }
+
+    if (cur.battery < 20 && (p.battery === undefined || p.battery >= 20)) {
+      voiceEngine.announce(
+        `${botName} battery critically low. Charging required.`,
+        { category: 'emergency', priority: 3, dedupeKey: `bat_${rid}`, cooldownMs: 25000 }
+      );
+    }
+
+    if (modeChanged) {
+      voiceEngine.announce(
+        `${botName} switched to ${cur.mode} mode.`,
+        { category: 'system', priority: 2, dedupeKey: `mode_${rid}`, cooldownMs: 2500 }
+      );
+    }
+
+    // Priority 2: Delivery / Task Completion
+    if (doneChanged || (carryChanged && !cur.carrying && (p.state === 'DELIVERING' || p.state === 'MOVING_TO_DELIVERY' || cur.state === 'IDLE'))) {
+      soundEngine.playDeliverySequence(rid);
+      const pidText = p.parcel_id ? ` for parcel ${p.parcel_id}` : '';
+      voiceEngine.announce(
+        `${botName} delivery confirmed${pidText}. Task completed.`,
+        { category: 'parcels', priority: 2, dedupeKey: `deliv_${rid}`, cooldownMs: 2500 }
+      );
+      continue;
+    }
+
+    // Priority 3: Parcel Pickup
+    if (carryChanged && cur.carrying) {
+      soundEngine.playPickupSequence(rid);
+      const pidText = cur.parcel_id ? ` parcel ${cur.parcel_id}` : '';
+      voiceEngine.announce(
+        `${botName} pickup confirmed${pidText}. In transit to delivery bay.`,
+        { category: 'parcels', priority: 2, dedupeKey: `pick_${rid}`, cooldownMs: 2500 }
+      );
+      continue;
+    }
+
+    // Priority 4: Scanning / Inspection / Approach
+    if (stateChanged && (cur.state === 'PICKING' || cur.state === 'INSPECTING')) {
+      soundEngine.playScan(rid);
+      voiceEngine.announce(
+        cur.state === 'INSPECTING' ? `${botName} scanning warehouse sector.` : `${botName} approaching pickup point.`,
+        { category: 'parcels', priority: 2, dedupeKey: `scan_${rid}`, cooldownMs: 4000 }
+      );
+      continue;
+    }
+
+    if (stateChanged && cur.state === 'DELIVERING') {
+      voiceEngine.announce(
+        `${botName} approaching delivery location.`,
+        { category: 'parcels', priority: 2, dedupeKey: `app_deliv_${rid}`, cooldownMs: 4000 }
+      );
+    }
+
+    // Priority 5: Task Assigned
+    if (taskChanged) {
+      soundEngine.playTaskAssigned(rid);
+      voiceEngine.announce(
+        `Task ${cur.task_id} assigned to ${botName}.`,
+        { category: 'parcels', priority: 2, dedupeKey: `assign_${rid}`, cooldownMs: 3000 }
+      );
+    }
+
+    if (replanChanged) {
+      voiceEngine.announce(
+        `${botName} new route calculated.`,
+        { category: 'movement', priority: 1, dedupeKey: `replan_${rid}`, cooldownMs: 4500 }
+      );
+    }
+
+    // Priority 6: Movement Start / Stop / Step / Turn
+    const wasMoving = String(p.state).startsWith('MOVING');
+    const isMoving = cur.state.startsWith('MOVING');
+    if (stateChanged && !wasMoving && isMoving) {
+      soundEngine.playRobotMoveStart(rid);
+      voiceEngine.announce(
+        `${botName} initiating movement.`,
+        { category: 'movement', priority: 1, dedupeKey: `mstart_${rid}`, cooldownMs: 4500 }
+      );
+    } else if (stateChanged && wasMoving && (cur.state === 'IDLE' || cur.state === 'PAUSED')) {
+      soundEngine.playRobotStop(rid);
+      if (cur.state === 'IDLE') {
+        voiceEngine.announce(
+          `${botName} arrived at destination.`,
+          { category: 'movement', priority: 1, dedupeKey: `arrive_${rid}`, cooldownMs: 4500 }
+        );
+      }
+    } else if (moved) {
+      soundEngine.playRobotStep(rid, cur.carrying);
+    } else if (turned) {
+      soundEngine.playRobotTurn(rid);
+      if (Math.abs(yawDiff) > 1.2) {
+        const dir = yawDiff > 0 ? 'left' : 'right';
+        voiceEngine.announce(
+          `${botName} turning ${dir}.`,
+          { category: 'movement', priority: 1, dedupeKey: `turn_${rid}`, cooldownMs: 6500 }
+        );
+      }
+    }
+  }
+
+    if (anyChange) {
+    saveSnap();
+  }
+}
+
+function updateEmergencyBanner(data) {
+  const banner = document.getElementById('emergency-banner');
+  const txt = document.getElementById('emergency-banner-text');
+  if (!banner) return;
+  const robotsList = Array.isArray(data?.robots) ? data.robots : [];
+  const stopped = robotsList.filter(r => r.e_stopped || r.state === 'E_STOPPED' || r.state === 'EMERGENCY');
+  const isGlobal = Boolean(data?.meta?.global_e_stop);
+  if (isGlobal || stopped.length > 0) {
+    banner.style.display = 'inline-flex';
+    if (txt) {
+      txt.textContent = isGlobal || stopped.length === robotsList.length
+        ? `EMERGENCY ACTIVE — ALL FLEET UNITS HALTED (${stopped.length}/${robotsList.length})`
+        : `EMERGENCY ACTIVE — STOPPED: ${stopped.map(r => r.name || 'R' + r.id).join(', ')}`;
+    }
+  } else {
+    banner.style.display = 'none';
+  }
+}
+
+const _audioVizBins = new Uint8Array(32);
+
+function syncAudioHUDFromEngine() {
+  const s = soundEngine.settings;
+  const st = soundEngine.getStatus();
+
+  const btnUnlock = document.getElementById('btn-audio-unlock');
+  const badge = document.getElementById('audio-status-badge');
+  const btnMaster = document.getElementById('btn-sound-master');
+  const themeSel = document.getElementById('sound-theme-select');
+  const volSlider = document.getElementById('sound-master-vol');
+  const volLbl = document.getElementById('sound-master-vol-lbl');
+
+  if (btnUnlock) {
+    if (!st.supported) {
+      btnUnlock.textContent = '🔇 No WebAudio';
+      btnUnlock.disabled = true;
+    } else if (!st.unlocked) {
+      btnUnlock.textContent = '🔇 Enable Audio';
+      btnUnlock.style.borderColor = 'rgba(217,70,239,0.5)';
+      btnUnlock.style.color = '#e879f9';
+    } else if (s.masterEnabled) {
+      btnUnlock.textContent = '🔊 Audio Active';
+      btnUnlock.style.borderColor = '#10b981';
+      btnUnlock.style.color = '#10b981';
+    } else {
+      btnUnlock.textContent = '🔇 Muted';
+      btnUnlock.style.borderColor = '#f59e0b';
+      btnUnlock.style.color = '#f59e0b';
+    }
+  }
+  if (badge) {
+    if (!st.unlocked) {
+      badge.textContent = 'LOCKED';
+      badge.style.color = '#f59e0b';
+    } else if (s.masterEnabled) {
+      badge.textContent = s.theme.toUpperCase();
+      badge.style.color = '#10b981';
+    } else {
+      badge.textContent = 'MUTED';
+      badge.style.color = '#ef4444';
+    }
+  }
+  if (btnMaster) {
+    btnMaster.textContent = s.masterEnabled ? '🔊 Audio: ON' : '🔇 Audio: OFF';
+  }
+  if (themeSel) themeSel.value = s.theme;
+  if (volSlider) volSlider.value = String(s.masterVolume);
+  if (volLbl) volLbl.textContent = `${Math.round(s.masterVolume * 100)}%`;
+
+  const setChk = (id, val) => { const el = document.getElementById(id); if (el) el.checked = Boolean(val); };
+  setChk('snd-chk-move', s.movementEnabled);
+  setChk('snd-chk-pickup', s.pickupEnabled);
+  setChk('snd-chk-delivery', s.deliveryEnabled);
+  setChk('snd-chk-scan', s.scanningEnabled);
+  setChk('snd-chk-ambient', s.ambientEnabled);
+  setChk('snd-chk-voice', voiceEngine.settings.voiceEnabled);
+
+  const voiceSel = document.getElementById('voice-profile-select');
+  if (voiceSel) voiceSel.value = voiceEngine.settings.voiceProfile;
+}
+
+function initAudioHUD() {
+  const autoUnlock = async () => {
+    const ok = await soundEngine.unlockAudio();
+    if (ok) {
+      syncAudioHUDFromEngine();
+      window.removeEventListener('pointerdown', autoUnlock);
+      window.removeEventListener('keydown', autoUnlock);
+    }
+  };
+  window.addEventListener('pointerdown', autoUnlock, { passive: true });
+  window.addEventListener('keydown', autoUnlock, { passive: true });
+
+  document.getElementById('btn-audio-unlock')?.addEventListener('click', async () => {
+    const st = soundEngine.getStatus();
+    if (!st.unlocked) {
+      await soundEngine.unlockAudio();
+      await soundEngine.previewTheme(soundEngine.settings.theme);
+    } else {
+      soundEngine.updateSettings({ masterEnabled: !soundEngine.settings.masterEnabled });
+    }
+    syncAudioHUDFromEngine();
+  });
+
+  document.getElementById('btn-sound-master')?.addEventListener('click', async () => {
+    await soundEngine.unlockAudio();
+    soundEngine.updateSettings({ masterEnabled: !soundEngine.settings.masterEnabled });
+    syncAudioHUDFromEngine();
+  });
+
+  document.getElementById('btn-sound-preview')?.addEventListener('click', async () => {
+    await soundEngine.previewTheme(soundEngine.settings.theme);
+    syncAudioHUDFromEngine();
+  });
+
+  document.getElementById('sound-theme-select')?.addEventListener('change', async (e) => {
+    await soundEngine.unlockAudio();
+    soundEngine.updateSettings({ theme: e.target.value });
+    syncAudioHUDFromEngine();
+  });
+
+  document.getElementById('sound-master-vol')?.addEventListener('input', (e) => {
+    soundEngine.updateSettings({ masterVolume: parseFloat(e.target.value) });
+    syncAudioHUDFromEngine();
+  });
+
+  const bindChk = (id, key) => {
+    document.getElementById(id)?.addEventListener('change', async (e) => {
+      await soundEngine.unlockAudio();
+      soundEngine.updateSettings({ [key]: e.target.checked });
+      syncAudioHUDFromEngine();
+    });
+  };
+  bindChk('snd-chk-move', 'movementEnabled');
+  bindChk('snd-chk-pickup', 'pickupEnabled');
+  bindChk('snd-chk-delivery', 'deliveryEnabled');
+  bindChk('snd-chk-scan', 'scanningEnabled');
+  bindChk('snd-chk-ambient', 'ambientEnabled');
+
+  document.getElementById('snd-chk-voice')?.addEventListener('change', async (e) => {
+    await soundEngine.unlockAudio();
+    voiceEngine.updateSettings({ voiceEnabled: e.target.checked });
+    syncAudioHUDFromEngine();
+  });
+
+  document.getElementById('voice-profile-select')?.addEventListener('change', async (e) => {
+    await soundEngine.unlockAudio();
+    voiceEngine.updateSettings({ voiceProfile: e.target.value });
+    syncAudioHUDFromEngine();
+  });
+
+  document.getElementById('btn-voice-test')?.addEventListener('click', async () => {
+    await voiceEngine.testVoice(voiceEngine.settings.voiceProfile);
+  });
+
+  document.getElementById('btn-voice-test-emg')?.addEventListener('click', async () => {
+    await voiceEngine.testEmergency(voiceEngine.settings.emergencyVoiceProfile);
+  });
+
+  syncAudioHUDFromEngine();
+}
+
+function renderAudioVisualizer() {
+  const canvas = document.getElementById('audio-visualizer');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  const w = canvas.width;
+  const h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+
+  const active = soundEngine.getVisualizerBins(_audioVizBins);
+  const bars = 12;
+  const barW = Math.floor((w - (bars - 1) * 1.5) / bars);
+
+  for (let i = 0; i < bars; i++) {
+    const val = active ? (_audioVizBins[i] || 0) / 255 : 0.08;
+    const bh = Math.max(2, Math.round(val * (h - 3)));
+    const x = i * (barW + 1.5);
+    const y = h - bh - 1;
+    ctx.fillStyle = active ? (i % 2 === 0 ? '#00f0ff' : '#d946ef') : 'rgba(100, 116, 139, 0.4)';
+    ctx.fillRect(x, y, barW, bh);
+  }
 }
 
 function updateKPIDisplay(metrics) {
@@ -3125,7 +3541,8 @@ function updateRobots(dt) {
     }
 
     // State-driven underglow color
-    const stateColor = STATE_COLORS[data.state] || STATE_COLORS.IDLE;
+    const isEmergencyState = data.state === 'EMERGENCY' || data.state === 'E_STOPPED' || data.e_stopped === true;
+    const stateColor = isEmergencyState ? COL_RED : (STATE_COLORS[data.state] || STATE_COLORS.IDLE);
     const underglow = group.userData.underglow;
     if (underglow) {
       const nightMultiplier = state.activeTheme === 'nightops' ? 3.5 : 1.0;
@@ -3133,8 +3550,8 @@ function updateRobots(dt) {
       underglow.material.opacity = 0.4 * nightMultiplier;
 
       // Emergency flash
-      if (data.state === 'EMERGENCY') {
-        underglow.material.opacity = Math.sin(state.animTime * 10) > 0 ? 0.8 : 0.1;
+      if (isEmergencyState) {
+        underglow.material.opacity = Math.sin(state.animTime * 10) > 0 ? 0.9 : 0.15;
       }
     }
 
@@ -3330,6 +3747,8 @@ function initHUD() {
     }
     document.getElementById('btn-play')?.classList.add('active');
     document.getElementById('btn-pause')?.classList.remove('active');
+    soundEngine.playRobotMoveStart(1);
+    voiceEngine.announce('Automatic fleet operations initiated. All robots online.', { category: 'system', priority: 2, dedupeKey: 'fleet_start', cooldownMs: 4000 });
     window.parent?.postMessage({ type: 'START_FLEET' }, '*');
   });
 
@@ -3340,6 +3759,7 @@ function initHUD() {
     }
     document.getElementById('btn-pause')?.classList.add('active');
     document.getElementById('btn-play')?.classList.remove('active');
+    voiceEngine.announce('Warehouse operations paused. All robots holding.', { category: 'system', priority: 2, dedupeKey: 'fleet_pause', cooldownMs: 4000 });
     window.parent?.postMessage({ type: 'PAUSE_FLEET' }, '*');
   });
 
@@ -3350,16 +3770,21 @@ function initHUD() {
     }
     document.getElementById('btn-play')?.classList.add('active');
     document.getElementById('btn-pause')?.classList.remove('active');
+    voiceEngine.announce('Warehouse operations resumed.', { category: 'system', priority: 2, dedupeKey: 'fleet_resume', cooldownMs: 4000 });
     window.parent?.postMessage({ type: 'RESUME_FLEET' }, '*');
   });
 
   document.getElementById('btn-fleet-estop')?.addEventListener('click', () => {
     state.simRunning = false;
     for (const [id, entry] of state.robots) {
-      entry.data.state = 'EMERGENCY';
+      entry.data.state = 'E_STOPPED';
+      entry.data.e_stopped = true;
     }
     document.getElementById('btn-pause')?.classList.add('active');
     document.getElementById('btn-play')?.classList.remove('active');
+    updateEmergencyBanner({ meta: { global_e_stop: true }, robots: Array.from(state.robots.values()).map(e => e.data) });
+    soundEngine.playEmergencyStop();
+    voiceEngine.announce('Warning. Emergency stop activated. All affected autonomous units are stopping. Please stand by.', { category: 'emergency', priority: 3, dedupeKey: 'estop', cooldownMs: 3000 });
     window.parent?.postMessage({ type: 'EMERGENCY_STOP' }, '*');
   });
 
@@ -3401,6 +3826,7 @@ function initHUD() {
     entry.data.task_id = wp.name;
     entry.lerpT = 0;
     updateRobotPanel(entry.data);
+    soundEngine.playTaskAssigned(state.selectedRobot);
     window.parent?.postMessage({ type: 'ASSIGN_ROBOT_TASK', robot_id: state.selectedRobot, task: wp.name, target: [wp.x, wp.y] }, '*');
   });
 
@@ -3471,6 +3897,9 @@ function initHUD() {
       }
     }
   });
+
+  // ── Sound System HUD Controls ──
+  initAudioHUD();
 
   // Keyboard input
   window.addEventListener('keydown', (e) => {
@@ -3713,6 +4142,9 @@ function animate() {
 
   // Render
   state.renderer.render(state.scene, state.camera);
+
+  // Update lightweight audio waveform visualizer
+  renderAudioVisualizer();
 }
 
 function animateRoboticArms(dt) {
@@ -3849,6 +4281,10 @@ function dispose() {
 
   // Remove event listeners
   window.removeEventListener('resize', onResize);
+
+  // Dispose Web Audio & Voice engines
+  voiceEngine.clearQueue();
+  soundEngine.dispose();
 }
 
 /* ═══════════════════════════════════════════════════════════════

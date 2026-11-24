@@ -273,10 +273,14 @@ def render_settings_page() -> None:
     """Renders application settings and build specifications."""
     render_section_header(
         "Platform Configuration & Settings",
-        "Runtime environment configuration, demonstration thresholds, and engineering build metadata.",
+        "Runtime environment configuration, futuristic sound system controls, and engineering build metadata.",
         icon="⚙️",
     )
 
+    from ui.sound_panel import render_sound_control_panel
+    render_sound_control_panel(key_prefix="settings_snd")
+
+    st.divider()
     st.markdown("#### 📋 Platform Build Information")
     st.markdown(
         """

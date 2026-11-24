@@ -289,6 +289,7 @@ def build_simulation_state(
     sim_speed: float = 1.0,
     include_large_layout: bool = False,
     quality_tier: str = "medium",
+    sound_settings: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Construct a JSON-serializable world state payload adhering to Bridge
@@ -355,6 +356,7 @@ def build_simulation_state(
         "layout_version": 1,
         "generated_at": round(now_ts, 3),
         "quality_tier": quality_tier,
+        "global_e_stop": bool(getattr(sim, "global_e_stop", False)),
     }
 
     # ── Static Layout ────────────────────────────────────────────────────────
@@ -811,7 +813,7 @@ def build_simulation_state(
     if hasattr(sim, "inventory_manager") and sim.inventory_manager is not None:
         parcels_payload = sim.inventory_manager.to_bridge_payload()
 
-    return {
+    payload = {
         "meta": meta,
         "layout": layout,
         "robots": robots_payload,
@@ -823,6 +825,9 @@ def build_simulation_state(
         "alerts": alerts,
         "metrics": kpis,
     }
+    if sound_settings is not None:
+        payload["sound_settings"] = sound_settings
+    return payload
 
 
 def to_json(state: Dict[str, Any]) -> str:

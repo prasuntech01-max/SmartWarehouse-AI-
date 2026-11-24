@@ -32,8 +32,13 @@ from analytics.service import AnalyticsService
 from recommendations.engine import RecommendationEngine
 from ui.theme import inject_custom_theme
 from ui.navigation import render_sidebar_navigation
+import importlib
 from ui.auth_helper import init_auth_session, check_permission
-from ui.branding import render_enterprise_header
+import ui.branding as _ui_branding
+if not hasattr(_ui_branding, "render_global_emergency_banner"):
+    importlib.reload(_ui_branding)
+render_enterprise_header = _ui_branding.render_enterprise_header
+render_global_emergency_banner = _ui_branding.render_global_emergency_banner
 
 from ui.pages.command_centre import render_command_centre_view
 from ui.pages.digital_twin_view import render_digital_twin_page
@@ -117,6 +122,7 @@ selected_view = render_sidebar_navigation()
 
 # Render Enterprise Top Header (Product Branding, Live Clock, System Status, User Pill)
 render_enterprise_header()
+render_global_emergency_banner(sim)
 
 # Route to active view
 if selected_view == "command_centre":

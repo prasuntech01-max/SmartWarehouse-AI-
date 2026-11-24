@@ -451,6 +451,10 @@ body.dock-collapsed #btn-toggle-dock-float{
      ║  CANVAS & DOCK TOGGLE                            ║
      ╚═══════════════════════════════════════════════════╝ -->
 <div id="canvas-container"></div>
+<div id="emergency-banner" style="display:none;position:fixed;top:calc(var(--topbar-h) + 10px);left:50%;transform:translateX(-50%);z-index:150;background:rgba(127,29,29,0.94);border:2px solid #ef4444;border-radius:8px;padding:8px 18px;color:#ffffff;font-size:12px;font-weight:800;letter-spacing:1px;box-shadow:0 0 22px rgba(239,68,68,0.75);align-items:center;gap:10px;pointer-events:none;">
+  <span>🚨</span>
+  <span id="emergency-banner-text">EMERGENCY ACTIVE — ALL ROBOTS HALTED</span>
+</div>
 <button id="btn-toggle-dock-float" title="Expand Control Panel">⚙️ Controls</button>
 
 <!-- ╔═══════════════════════════════════════════════════╗
@@ -468,6 +472,8 @@ body.dock-collapsed #btn-toggle-dock-float{
     <span class="brand-badge">5/5 FLEET ONLINE</span>
     <span class="brand-live"><span class="brand-live-dot"></span> REAL-TIME</span>
     <button id="btn-toggle-dock" class="dock-toggle-btn" title="Toggle Side Control Panel">▶ Controls</button>
+    <button id="btn-audio-unlock" class="dock-toggle-btn" title="Enable / Mute Futuristic Audio" style="border-color:rgba(217,70,239,0.45);color:#e879f9;">🔇 Enable Audio</button>
+    <canvas id="audio-visualizer" width="56" height="20" title="Live Audio Waveform" style="border-radius:4px;background:rgba(0,240,255,0.05);border:1px solid rgba(0,240,255,0.15);margin-left:4px;"></canvas>
   </div>
   <div class="metrics">
     <div class="metric-pill" id="dash-step"><span class="label">Step</span><span class="value">0</span></div>
@@ -575,6 +581,49 @@ body.dock-collapsed #btn-toggle-dock-float{
     <label class="toggle-row"><input type="checkbox" id="toggle-hazards" checked/><span>Hazard Zones</span></label>
     <label class="toggle-row"><input type="checkbox" id="toggle-labels" checked/><span>Labels &amp; Signs</span></label>
     <label class="toggle-row"><input type="checkbox" id="toggle-scenery" checked/><span>Scenery</span></label>
+  </div>
+
+  <!-- Futuristic Sound System -->
+  <div class="dock-section">
+    <div class="dock-label" style="display:flex;justify-content:space-between;align-items:center;">
+      <span>🔊 Futuristic Audio</span>
+      <span id="audio-status-badge" style="font-size:8px;color:#f59e0b;letter-spacing:.6px;">LOCKED</span>
+    </div>
+    <div class="btn-grid cols-2">
+      <button class="dock-btn" id="btn-sound-master" style="border-color:#00f0ff;color:#00f0ff;">🔊 Audio: ON</button>
+      <button class="dock-btn" id="btn-sound-preview" style="border-color:#d946ef;color:#e879f9;">▶ Preview</button>
+    </div>
+    <select class="dock-select" id="sound-theme-select">
+      <option value="industrial">🏭 Industrial Future</option>
+      <option value="alien">👽 Alien Technology</option>
+      <option value="cyberpunk">⚡ Cyberpunk</option>
+    </select>
+    <div class="range-row">
+      <span style="font-size:10px;color:var(--muted);min-width:34px;">Vol</span>
+      <input type="range" id="sound-master-vol" min="0" max="1" step="0.05" value="0.75"/>
+      <span class="speed-label" id="sound-master-vol-lbl">75%</span>
+    </div>
+    <div class="btn-grid cols-2" style="gap:3px;">
+      <label class="toggle-row"><input type="checkbox" id="snd-chk-move" checked/><span>Movement</span></label>
+      <label class="toggle-row"><input type="checkbox" id="snd-chk-pickup" checked/><span>Pickup</span></label>
+      <label class="toggle-row"><input type="checkbox" id="snd-chk-delivery" checked/><span>Delivery</span></label>
+      <label class="toggle-row"><input type="checkbox" id="snd-chk-scan" checked/><span>Scanning</span></label>
+      <label class="toggle-row"><input type="checkbox" id="snd-chk-ambient"/><span>Ambient</span></label>
+      <label class="toggle-row"><input type="checkbox" id="snd-chk-voice" checked/><span>AI Voice</span></label>
+    </div>
+    <select class="dock-select" id="voice-profile-select" style="margin-top:4px;">
+      <option value="british_female">🇬🇧 Voice: British Female AI</option>
+      <option value="american_female">🇺🇸 Voice: American Female AI</option>
+      <option value="command_ai">🎖️ Voice: Male COMMAND AI</option>
+      <option value="alien_core">👽 Voice: Male ALIEN CORE</option>
+      <option value="cyber_robot">🤖 Voice: Male CYBER ROBOT</option>
+      <option value="neural_ai">🧠 Voice: NEURAL AI</option>
+      <option value="alert_system">🚨 Voice: ALERT SYSTEM</option>
+    </select>
+    <div class="btn-grid cols-2" style="margin-top:4px;">
+      <button class="dock-btn" id="btn-voice-test" style="border-color:#38bdf8;color:#38bdf8;">🗣️ Test Voice</button>
+      <button class="dock-btn" id="btn-voice-test-emg" style="border-color:#ef4444;color:#ef4444;">🚨 Test Alert</button>
+    </div>
   </div>
 
   <!-- Graphics Tier -->
