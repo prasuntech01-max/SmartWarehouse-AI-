@@ -813,10 +813,19 @@ def build_simulation_state(
     if hasattr(sim, "inventory_manager") and sim.inventory_manager is not None:
         parcels_payload = sim.inventory_manager.to_bridge_payload()
 
+    # ── Active A* Paths (top-level for Three.js Path Ribbons) ─────────────────
+    paths_payload: List[List[List[int]]] = [
+        r["path"] for r in robots_payload if r.get("path") and len(r["path"]) >= 2
+    ]
+
+    astar_stats = sim.get_astar_telemetry() if hasattr(sim, "get_astar_telemetry") else {}
+    event_log = list(getattr(sim, "event_log", []))[-12:]
+
     payload = {
         "meta": meta,
         "layout": layout,
         "robots": robots_payload,
+        "paths": paths_payload,
         "tasks": tasks_payload,
         "parcels": parcels_payload,
         "obstacles": dynamic_obs,
@@ -824,6 +833,8 @@ def build_simulation_state(
         "hazards": hazards,
         "alerts": alerts,
         "metrics": kpis,
+        "astar_stats": astar_stats,
+        "event_log": event_log,
     }
     if sound_settings is not None:
         payload["sound_settings"] = sound_settings
