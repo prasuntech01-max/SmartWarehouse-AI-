@@ -38,6 +38,7 @@ class RobotState:
     health: float = 100.0
     total_distance: int = 0
     completed_tasks: int = 0
+    replan_count: int = 0
     e_stopped: bool = False
 
 
@@ -61,6 +62,7 @@ class WarehouseSimulator:
         self.inventory_manager = InventoryManager(seed=self.seed)
         self.command_history: List[RobotCommandLogEntry] = []
         self.command_counter: int = 0
+        self.event_log: List[Dict[str, Any]] = []
         self.global_e_stop: bool = False
         self.assignment_strategy = AssignmentStrategy.WEIGHTED_MULTI_CRITERIA
         self.assignment_engine = TaskAssignmentEngine(self.grid, default_strategy=self.assignment_strategy)
@@ -70,7 +72,8 @@ class WarehouseSimulator:
         self.robots: Dict[int, RobotState] = {}
         self._init_fleet()
         self.task_manager.populate_initial_tasks(count=20, current_step=0)
-        self.inventory_manager.seed_inventory(self.grid, count=25, tick=0)
+        self.inventory_manager.seed_inventory(self.grid, count=30, tick=0)
+        self._log_event("Warehouse simulator initialized with 5 autonomous robots and 30 parcels.", category="SYSTEM")
 
     @property
     def tasks(self) -> Dict[int, WarehouseTask]:
@@ -114,11 +117,13 @@ class WarehouseSimulator:
         self.task_manager = TaskManager(self.grid, seed=self.seed)
         self.inventory_manager = InventoryManager(seed=self.seed)
         self.command_history.clear()
+        self.event_log.clear()
         self.global_e_stop = False
         self.assignment_engine = TaskAssignmentEngine(self.grid, default_strategy=self.assignment_strategy)
         self.task_manager.populate_initial_tasks(count=20, current_step=0)
-        self.inventory_manager.seed_inventory(self.grid, count=25, tick=0)
+        self.inventory_manager.seed_inventory(self.grid, count=30, tick=0)
         self._init_fleet()
+        self._log_event("Warehouse simulator reset to tick 0.", category="SYSTEM")
 
     def set_assignment_strategy(self, strategy: AssignmentStrategy) -> None:
         """Configures the current multi-robot assignment strategy."""
@@ -138,6 +143,139 @@ class WarehouseSimulator:
             priority=priority,
             current_step=self.step_count,
         )
+
+    def _log_event(
+        self,
+        message: str,
+        category: str = "OPS",
+        robot_id: Optional[int] = None,
+        parcel_id: Optional[str] = None,
+    ) -> None:
+        """Append a real timestamped operational event to the live event log."""
+        self.event_log.append({
+            "time": time.strftime("%H:%M:%S"),
+            "tick": self.step_count,
+            "category": category,
+            "robot_id": robot_id,
+            "parcel_id": parcel_id,
+            "message": message,
+        })
+        if len(self.event_log) > 100:
+            self.event_log.pop(0)
+
+    def get_astar_telemetry(self) -> Dict[str, Any]:
+        """Return real A* planner statistics, active path metrics, and conflict counts."""
+        stats = dict(getattr(self.planner, "last_plan_stats", {}) or {})
+        total_replan = sum(getattr(r, "replan_count", 0) for r in self.robots.values())
+        active_routes = []
+        for rid, r in sorted(self.robots.items()):
+            rem = r.path[r.path_index:] if r.path else []
+            active_routes.append({
+                "robot_id": rid,
+                "state": r.state,
+                "pos": r.pos,
+                "goal": r.goal,
+                "remaining_steps": max(0, len(rem) - 1),
+                "replan_count": getattr(r, "replan_count", 0),
+            })
+        stats["total_replans"] = total_replan
+        stats["active_routes"] = active_routes
+        stats["detected_conflicts"] = self.metrics.detected_conflicts_count
+        stats["deadlocks_resolved"] = self.metrics.deadlock_events_count
+        return stats
+
+    def assign_parcel_task(
+        self,
+        parcel_id: str,
+        robot_id: int,
+        destination: Optional[Tuple[int, int]] = None,
+    ) -> Tuple[bool, str]:
+        """Assign an available shelf parcel to a robot for real A* pickup and delivery."""
+        if self.global_e_stop:
+            return False, "GLOBAL EMERGENCY STOP is active. Clear emergency before assigning parcels."
+        if robot_id not in self.robots:
+            return False, f"Robot R{robot_id} does not exist."
+        robot = self.robots[robot_id]
+        if robot.e_stopped:
+            return False, f"Robot R{robot_id} is in EMERGENCY STOP state."
+        if robot.state != 'IDLE':
+            return False, f"Robot R{robot_id} is currently {robot.state}. Only IDLE robots can be assigned."
+        if robot.carrying_parcel is not None:
+            return False, f"Robot R{robot_id} is already carrying {robot.carrying_parcel.parcel_id}."
+
+        parcel = self.inventory_manager.get_parcel_by_id(parcel_id)
+        if not parcel:
+            return False, f"Parcel {parcel_id} not found."
+        if parcel.status != 'AVAILABLE':
+            return False, f"Parcel {parcel_id} is currently {parcel.status} and cannot be claimed."
+        if parcel.spec.heavy and robot_id != 1:
+            return False, f"Heavy parcel {parcel_id} ({parcel.spec.weight_kg}kg) requires Heavy AMR TITAN-X (Robot 1)."
+
+        pickup_cell = parcel.pickup_cell or parcel.location
+        if not pickup_cell or not self.grid.is_walkable(pickup_cell[0], pickup_cell[1]):
+            return False, f"Pickup cell {pickup_cell} for {parcel_id} is not navigable."
+
+        target_dest = tuple(destination) if destination is not None else parcel.destination
+        if not target_dest or not self.grid.is_walkable(target_dest[0], target_dest[1]):
+            return False, f"Destination {target_dest} is not walkable."
+        if target_dest == pickup_cell:
+            return False, "Pickup location and destination cannot be identical."
+
+        # Plan Space-Time A* path from robot's current position to parcel pickup cell
+        path = self.planner.plan(
+            start=robot.pos,
+            goal=pickup_cell,
+            start_time=self.step_count,
+            robot_id=robot_id,
+        )
+        if not path:
+            return False, f"No collision-free A* route from R{robot_id} {robot.pos} to {pickup_cell}."
+
+        # Reserve parcel in single authoritative InventoryManager
+        self.inventory_manager.reserve_parcel(parcel_id, robot_id, self.step_count)
+        parcel.destination = target_dest
+
+        # Create & assign corresponding WarehouseTask
+        task = self.task_manager.create_custom_task(
+            pick_spot=pickup_cell,
+            delivery_station=target_dest if target_dest in self.grid.packing_stations else (self.grid.packing_stations[0] if self.grid.packing_stations else target_dest),
+            priority=TaskPriority.HIGH if parcel.priority == ParcelPriority.EXPRESS else TaskPriority.NORMAL,
+            current_step=self.step_count,
+        )[0]
+        if task is None:
+            # Fallback direct WarehouseTask when delivering to a shelf/counter outside packing_stations
+            from core.task_manager import WarehouseTask
+            tid = self.task_manager.task_counter
+            self.task_manager.task_counter += 1
+            task = WarehouseTask(
+                task_id=tid,
+                shelf_loc=pickup_cell,
+                pick_spot=pickup_cell,
+                delivery_station=target_dest,
+                priority=TaskPriority.HIGH if parcel.priority == ParcelPriority.EXPRESS else TaskPriority.NORMAL,
+                status='QUEUED',
+                created_at_step=self.step_count,
+                estimated_cost=abs(pickup_cell[0] - target_dest[0]) + abs(pickup_cell[1] - target_dest[1]),
+            )
+            self.task_manager.tasks[tid] = task
+
+        self.task_manager.assign_task_to_robot(task.task_id, robot_id, self.step_count)
+        robot.assigned_task = task
+        robot.goal = pickup_cell
+        robot.state = 'MOVING_TO_PICK'
+        robot.path = path
+        robot.path_index = 0
+        self.reservation_table.reserve_path(path, robot_id=robot_id, start_time=self.step_count)
+
+        pstats = self.planner.last_plan_stats
+        self._log_event(
+            f"{parcel_id} reserved for R{robot_id} ({parcel.rack_slot_id or pickup_cell} -> {target_dest}). "
+            f"A* route: {len(path)} steps, {pstats.get('nodes_explored', 0)} nodes, {pstats.get('planning_time_ms', 0.0):.2f}ms.",
+            category="DISPATCH",
+            robot_id=robot_id,
+            parcel_id=parcel_id,
+        )
+        return True, f"Parcel {parcel_id} assigned to Robot R{robot_id} via Space-Time A* ({len(path)} waypoints)."
 
     def assign_task_manually(self, task_id: int, robot_id: int) -> Tuple[bool, str]:
         """Manually dispatches an eligible order to a selected idle robot."""
@@ -588,8 +726,13 @@ class WarehouseSimulator:
                 new_path = updated_paths[r_id]
                 self.robots[r_id].path = new_path
                 self.robots[r_id].path_index = 0
+                self.robots[r_id].replan_count += 1
 
         self.metrics.record_replan_event(latency_ms)
+        self._log_event(
+            f"Dynamic obstacle at ({x}, {y}): replanned {len(affected)} robot(s) in {latency_ms:.2f}ms.",
+            category="REPLAN",
+        )
         return True, f"Obstacle injected at ({x}, {y}). Affected {len(affected)} robot(s). Replan latency: {latency_ms:.2f}ms."
 
     def step(self) -> None:
@@ -698,29 +841,39 @@ class WarehouseSimulator:
                 if robot.wait_counter > 0:
                     robot.wait_counter -= 1
                 if robot.wait_counter == 0 and robot.assigned_task:
-                    # Physically attach parcel from inventory
-                    avail_parcels = [
-                        p for p in self.inventory_manager.parcels.values()
-                        if p.pickup_cell == robot.assigned_task.pick_spot and p.status in ('AVAILABLE', 'RESERVED')
-                    ]
-                    if avail_parcels:
-                        p_obj = avail_parcels[0]
+                    # Physically attach reserved parcel for this robot first, else available at pickup cell
+                    reserved_for_me = self.inventory_manager.get_reserved_parcel(r_id)
+                    if reserved_for_me and reserved_for_me.pickup_cell == robot.assigned_task.pick_spot:
+                        p_obj = reserved_for_me
                     else:
-                        p_obj = self.inventory_manager.create_parcel(
-                            parcel_type=ParcelType.MEDIUM_CARTON,
-                            location=robot.assigned_task.pick_spot,
-                            pickup_cell=robot.assigned_task.pick_spot,
-                            destination=robot.assigned_task.delivery_station,
-                            tick=current_step,
-                        )
+                        avail_parcels = [
+                            p for p in self.inventory_manager.parcels.values()
+                            if p.pickup_cell == robot.assigned_task.pick_spot and p.status == 'AVAILABLE'
+                        ]
+                        if avail_parcels:
+                            p_obj = avail_parcels[0]
+                        else:
+                            p_obj = self.inventory_manager.create_parcel(
+                                parcel_type=ParcelType.MEDIUM_CARTON,
+                                location=robot.assigned_task.pick_spot,
+                                pickup_cell=robot.assigned_task.pick_spot,
+                                destination=robot.assigned_task.delivery_station,
+                                tick=current_step,
+                            )
                     if p_obj.status == 'AVAILABLE':
                         self.inventory_manager.reserve_parcel(p_obj.parcel_id, r_id, current_step)
                     if p_obj.status == 'RESERVED':
                         self.inventory_manager.pickup_parcel(p_obj.parcel_id, r_id, current_step)
                         self.inventory_manager.begin_transit(p_obj.parcel_id, r_id, current_step)
                         robot.carrying_parcel = p_obj
+                        self._log_event(
+                            f"R{r_id} picked up & attached {p_obj.parcel_id} ({p_obj.parcel_type.value}) at {robot.pos}.",
+                            category="PICKUP",
+                            robot_id=r_id,
+                            parcel_id=p_obj.parcel_id,
+                        )
 
-                    robot.goal = robot.assigned_task.delivery_station
+                    robot.goal = p_obj.destination or robot.assigned_task.delivery_station
                     robot.state = 'MOVING_TO_DELIVERY'
                     robot.assigned_task.transition_to('MOVING_TO_DELIVERY', current_step, "Dispatched to delivery station")
                     path = self.planner.plan(
@@ -750,9 +903,11 @@ class WarehouseSimulator:
                 if robot.wait_counter > 0:
                     robot.wait_counter -= 1
                 if robot.wait_counter == 0 and robot.assigned_task:
+                    delivered_pid = None
                     if robot.carrying_parcel:
+                        delivered_pid = robot.carrying_parcel.parcel_id
                         self.inventory_manager.deliver_parcel(
-                            robot.carrying_parcel.parcel_id,
+                            delivered_pid,
                             r_id,
                             current_step,
                             destination_cell=robot.pos,
@@ -761,6 +916,12 @@ class WarehouseSimulator:
                     robot.completed_tasks += 1
                     self.task_manager.complete_task(robot.assigned_task.task_id, current_step)
                     self.metrics.record_task_completion()
+                    self._log_event(
+                        f"R{r_id} placed {delivered_pid or 'cargo'} at {robot.pos}. Task #{robot.assigned_task.task_id} completed.",
+                        category="DELIVERY",
+                        robot_id=r_id,
+                        parcel_id=delivered_pid,
+                    )
                     robot.assigned_task = None
                     robot.state = 'IDLE'
                     robot.goal = None

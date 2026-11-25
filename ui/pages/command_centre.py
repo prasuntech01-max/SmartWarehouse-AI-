@@ -22,6 +22,7 @@ from visualization.renderer_3d import Warehouse3DRenderer
 from visualization.renderer import WarehouseRenderer
 from visualization.threejs_bridge import ROBOT_FLEET_METADATA
 from core.commands import CommandType, CommandResult
+from ui.warehouse_backdrop import render_vacant_warehouse_backdrop
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -339,6 +340,9 @@ def render_command_centre_view(sim: Any, ai_engine: Any, analytics_service: Anal
                     r.state = "E_STOPPED"
                 st.error("GLOBAL EMERGENCY STOP ENGAGED: Fleet halted safely.")
                 st.rerun()
+
+        # Futuristic animated holographic warehouse backdrop filling the vacant left-column space
+        render_vacant_warehouse_backdrop(height_px=500)
 
     with col_fleet:
         # ── Robot Fleet Control Panel ──────────────────────────────────────────
@@ -757,6 +761,91 @@ def render_command_centre_view(sim: Any, ai_engine: Any, analytics_service: Anal
         plt.close(fig_2d)
 
         st.markdown("</div>", unsafe_allow_html=True)
+
+    # ── Interactive Parcel Handling, A* Pathfinding & Live Event Log ──────
+    st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
+    tab_parcel, tab_astar, tab_events = st.tabs([
+        "📦 Interactive Parcel Pickup & Placement",
+        "🧭 A* Pathfinding & Conflict Telemetry",
+        "📜 Live Operational Event Log",
+    ])
+
+    with tab_parcel:
+        all_parcels = list(sim.inventory_manager.parcels.values()) if hasattr(sim, "inventory_manager") else []
+        if all_parcels:
+            p_opts = [p.parcel_id for p in all_parcels]
+            p_col1, p_col2, p_col3 = st.columns([1.4, 1.2, 1.2])
+            with p_col1:
+                sel_pid = st.selectbox(
+                    "Select Parcel (ID • Type • Rack • Status)",
+                    options=p_opts,
+                    format_func=lambda pid: (
+                        f"{pid} | {sim.inventory_manager.parcels[pid].parcel_type.value} | "
+                        f"{sim.inventory_manager.parcels[pid].rack_slot_id or '—'} [{sim.inventory_manager.parcels[pid].status}]"
+                    ),
+                    key="cc_sel_parcel_id",
+                )
+            sel_p = sim.inventory_manager.get_parcel_by_id(sel_pid)
+            dest_choices = list(sim.grid.packing_stations) + list(sim.grid.get_accessible_shelf_locations()[:8])
+            with p_col2:
+                sel_dest = st.selectbox(
+                    "Destination Counter / Shelf",
+                    options=dest_choices,
+                    format_func=lambda d: (
+                        f"DISPATCH/PACK ({d[0]}, {d[1]})" if d in sim.grid.packing_stations else f"STORAGE SHELF ({d[0]}, {d[1]})"
+                    ),
+                    key="cc_sel_parcel_dest",
+                )
+            with p_col3:
+                sel_bot_parcel = st.selectbox(
+                    "Assign Robot",
+                    options=[1, 2, 3, 4, 5],
+                    format_func=lambda r: f"0{r} {fleet_meta[r]['name']} ({sim.robots[r].state if r in sim.robots else 'IDLE'})",
+                    key="cc_sel_parcel_bot",
+                )
+
+            if sel_p:
+                d_col1, d_col2, d_col3, d_col4 = st.columns(4)
+                d_col1.metric("Rack / Slot", sel_p.rack_slot_id or "—")
+                d_col2.metric("Specs", f"{sel_p.spec.weight_kg}kg ({sel_p.spec.length_cm:.0f}x{sel_p.spec.width_cm:.0f}cm)")
+                d_col3.metric("Status", sel_p.status)
+                d_col4.metric("Location", str(sel_p.location) if sel_p.location else f"Robot R{sel_p.carrier_robot}")
+
+            act_c1, act_c2 = st.columns([2, 1])
+            with act_c1:
+                if st.button("🚀 Assign Shelf-to-Robot Pickup & Delivery (A*)", key="cc_assign_parcel_btn", use_container_width=True):
+                    ok, msg = sim.assign_parcel_task(sel_pid, sel_bot_parcel, destination=sel_dest)
+                    if ok:
+                        st.success(msg)
+                    else:
+                        st.error(msg)
+                    analytics_service.invalidate_cache_if_needed()
+                    st.rerun()
+            with act_c2:
+                if st.button("⏩ Advance 5 Ticks", key="cc_step5_parcel_btn", use_container_width=True):
+                    for _ in range(5):
+                        sim.step()
+                    analytics_service.invalidate_cache_if_needed()
+                    st.rerun()
+
+    with tab_astar:
+        astar_info = sim.get_astar_telemetry() if hasattr(sim, "get_astar_telemetry") else {}
+        a1, a2, a3, a4, a5 = st.columns(5)
+        a1.metric("Algorithm", astar_info.get("algorithm", "Space-Time A*"))
+        a2.metric("Last Path Length", astar_info.get("path_length", 0))
+        a3.metric("Nodes Explored", astar_info.get("nodes_explored", 0))
+        a4.metric("Planning Time", f"{astar_info.get('planning_time_ms', 0.0):.2f} ms")
+        a5.metric("Replans / Conflicts", f"{astar_info.get('total_replans', 0)} / {astar_info.get('detected_conflicts', 0)}")
+        routes = astar_info.get("active_routes", [])
+        if routes:
+            st.dataframe(pd.DataFrame(routes), use_container_width=True, hide_index=True)
+
+    with tab_events:
+        ev_list = list(reversed(getattr(sim, "event_log", [])[-20:]))
+        if ev_list:
+            st.dataframe(pd.DataFrame(ev_list), use_container_width=True, hide_index=True)
+        else:
+            st.info("No operational events recorded yet.")
 
     # Scoped wrapper close
     st.markdown('</div>', unsafe_allow_html=True)

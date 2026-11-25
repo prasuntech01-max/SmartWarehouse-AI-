@@ -694,6 +694,28 @@ body.dock-collapsed #btn-toggle-dock-float{
 </aside>
 
 <!-- ╔═══════════════════════════════════════════════════╗
+     ║  PARCEL INSPECTION PANEL                         ║
+     ╚═══════════════════════════════════════════════════╝ -->
+<aside id="parcel-panel" class="hud-layer" style="display:none;top:56px;right:270px;width:235px;border-radius:var(--radius);flex-direction:column;overflow:hidden;">
+  <div class="panel-header">
+    <span class="panel-title" id="parcel-panel-id">PKG-0001</span>
+    <button class="panel-close" id="parcel-panel-close" title="Close">✕</button>
+  </div>
+  <div class="panel-body">
+    <div class="panel-row"><span class="pr-label">Status</span><span class="pr-value" id="parcel-panel-status">—</span></div>
+    <div class="panel-row"><span class="pr-label">Type</span><span class="pr-value" id="parcel-panel-type">—</span></div>
+    <div class="panel-row"><span class="pr-label">Rack / Slot</span><span class="pr-value" id="parcel-panel-rack">—</span></div>
+    <div class="panel-row"><span class="pr-label">Location</span><span class="pr-value" id="parcel-panel-loc">—</span></div>
+    <div class="panel-row"><span class="pr-label">Destination</span><span class="pr-value" id="parcel-panel-dest">—</span></div>
+    <div class="panel-row"><span class="pr-label">Specs</span><span class="pr-value" id="parcel-panel-specs">—</span></div>
+    <div class="panel-row"><span class="pr-label">Robot</span><span class="pr-value" id="parcel-panel-robot">—</span></div>
+  </div>
+  <div class="panel-actions">
+    <button class="panel-action-btn" id="parcel-focus-btn">🔍 Focus Parcel</button>
+  </div>
+</aside>
+
+<!-- ╔═══════════════════════════════════════════════════╗
      ║  TOUR CAPTION                                    ║
      ╚═══════════════════════════════════════════════════╝ -->
 <div id="tour-caption" class="hud-layer">

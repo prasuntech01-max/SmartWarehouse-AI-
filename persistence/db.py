@@ -2,7 +2,7 @@ import os
 import sqlite3
 import threading
 import datetime
-from typing import Generator, List, Tuple
+from typing import Generator, List, Optional, Tuple
 import logging
 
 logger = logging.getLogger(__name__)
@@ -18,7 +18,8 @@ sqlite3.register_adapter(datetime.datetime, _adapt_datetime_iso)
 sqlite3.register_converter("timestamp", _convert_datetime_iso)
 sqlite3.register_converter("TIMESTAMP", _convert_datetime_iso)
 
-DEFAULT_DB_PATH = os.getenv('SMARTWAREHOUSE_DB_PATH', os.path.join(os.getcwd(), 'data', 'smartwarehouse.db'))
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DEFAULT_DB_PATH = os.getenv('SMARTWAREHOUSE_DB_PATH', os.path.join(_PROJECT_ROOT, 'data', 'smartwarehouse.db'))
 
 # Ensure the data directory exists
 os.makedirs(os.path.dirname(DEFAULT_DB_PATH), exist_ok=True)
@@ -87,3 +88,46 @@ def close_connection() -> None:
     if conn is not None:
         conn.close()
         del _thread_local.conn
+
+
+def backup_database(backup_dir: Optional[str] = None) -> Tuple[str, str]:
+    """Create an online WAL-safe timestamped backup and verify its SQLite integrity.
+    Returns (backup_path, integrity_result). Never modifies the active database.
+    """
+    target_dir = backup_dir or os.path.join(_PROJECT_ROOT, 'backups')
+    os.makedirs(target_dir, exist_ok=True)
+    ts = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+    backup_path = os.path.join(target_dir, f'smartwarehouse_backup_{ts}.db')
+
+    src_conn = get_connection()
+    dst_conn = sqlite3.connect(backup_path)
+    try:
+        src_conn.backup(dst_conn)
+        integrity = dst_conn.execute('PRAGMA integrity_check;').fetchone()[0]
+        if integrity != 'ok':
+            raise RuntimeError(f'Backup integrity check failed: {integrity}')
+        return backup_path, integrity
+    finally:
+        dst_conn.close()
+
+
+def verify_backup_restore_to_temp(backup_path: str) -> Tuple[bool, str]:
+    """Test restoring a backup onto a separate temporary database file and verify integrity + FK checks."""
+    import tempfile
+    if not os.path.isfile(backup_path):
+        return False, f'Backup file not found: {backup_path}'
+    with tempfile.TemporaryDirectory() as tmpdir:
+        restore_path = os.path.join(tmpdir, 'restored_test.db')
+        src = sqlite3.connect(backup_path)
+        dst = sqlite3.connect(restore_path)
+        try:
+            src.backup(dst)
+            dst.execute('PRAGMA foreign_keys = ON;')
+            integrity = dst.execute('PRAGMA integrity_check;').fetchone()[0]
+            fk_issues = dst.execute('PRAGMA foreign_key_check;').fetchall()
+            if integrity != 'ok' or fk_issues:
+                return False, f'Restore verification failed (integrity={integrity}, fk_issues={len(fk_issues)})'
+            return True, f'Verified restore of {os.path.basename(backup_path)} (integrity=ok, fk_issues=0)'
+        finally:
+            dst.close()
+            src.close()

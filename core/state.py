@@ -222,6 +222,7 @@ class TimeExpandedPlanner:
         initial_state = TimeExpandedState(start_pos[0], start_pos[1], start_time)
 
         if start_pos == goal_pos:
+            self.last_nodes_explored = 1
             return Trajectory([initial_state], [])
 
         # Priority queue stores: (f_score, h_score, state_id, TimeExpandedState)
@@ -243,6 +244,7 @@ class TimeExpandedPlanner:
 
             # Reached spatial goal
             if current_state.pos == goal_pos:
+                self.last_nodes_explored = len(closed_set)
                 # Goal safety check: cell must remain free of incoming collisions for hold_at_goal steps
                 safe_at_goal = True
                 if self.reservation_table is not None:

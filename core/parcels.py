@@ -534,10 +534,13 @@ class InventoryManager:
             ptype = self._rng.choice(types)
             pickup = accessible[i % len(accessible)]
             dest = destinations[i % len(destinations)]
-            # Find a shelf adjacent to pickup
-            location = pickup  # parcel physically near pickup point
+            # Find a shelf adjacent to pickup and format structured rack/level ID
+            location = pickup
+            rack_zone = "A" if pickup[0] < 5 else ("B" if pickup[0] < 9 else "C")
+            rack_num = (i % 6) + 1
+            level_num = (i % 4) + 1
             priority = ParcelPriority.EXPRESS if self._rng.random() < 0.2 else ParcelPriority.NORMAL
-            rack_id = f"R{pickup[0]:02d}-{pickup[1]:02d}"
+            rack_id = f"RACK-{rack_zone}{rack_num:02d}-L{level_num}"
 
             parcel = self.create_parcel(
                 parcel_type=ptype,

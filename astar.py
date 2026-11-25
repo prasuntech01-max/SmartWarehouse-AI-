@@ -28,6 +28,16 @@ class AStarPlanner:
         self.warehouse = wh
         self.grid = wh  # alias for grid-based calls
         self.reservation_table = reservation_table
+        self.last_plan_stats: Dict[str, Any] = {
+            "algorithm": "Space-Time A*" if reservation_table is not None else "2D A*",
+            "start": None,
+            "goal": None,
+            "path_length": 0,
+            "nodes_explored": 0,
+            "planning_time_ms": 0.0,
+            "path_cost": 0,
+            "obstacles_encountered": len(getattr(wh, "dynamic_obstacles", set())),
+        }
 
     @staticmethod
     def manhattan_distance(p1: Tuple[int, int], p2: Tuple[int, int]) -> int:
@@ -65,10 +75,21 @@ class AStarPlanner:
         Returns the shortest obstacle-avoiding path from start to goal.
         """
         self._validate_endpoints(start, goal)
+        t_start = time.perf_counter()
         start = (int(start[0]), int(start[1]))
         goal = (int(goal[0]), int(goal[1]))
 
         if start == goal:
+            self.last_plan_stats = {
+                "algorithm": "2D A*",
+                "start": start,
+                "goal": goal,
+                "path_length": 1,
+                "nodes_explored": 1,
+                "planning_time_ms": round((time.perf_counter() - t_start) * 1000.0, 3),
+                "path_cost": 0,
+                "obstacles_encountered": len(getattr(self.warehouse, "dynamic_obstacles", set())),
+            }
             return [start]
 
         # Priority queue stores: (f_score, h_score, (x, y))
@@ -95,6 +116,16 @@ class AStarPlanner:
                     path.append(curr)
                     curr = came_from.get(curr)
                 path.reverse()
+                self.last_plan_stats = {
+                    "algorithm": "2D A*",
+                    "start": start,
+                    "goal": goal,
+                    "path_length": len(path),
+                    "nodes_explored": len(closed_set),
+                    "planning_time_ms": round((time.perf_counter() - t_start) * 1000.0, 3),
+                    "path_cost": max(0, len(path) - 1),
+                    "obstacles_encountered": len(getattr(self.warehouse, "dynamic_obstacles", set())),
+                }
                 return path
 
             for neighbor in self.warehouse.get_neighbors(current[0], current[1]):
@@ -134,7 +165,8 @@ class AStarPlanner:
             return self.plan_2d(start, goal, raise_on_failure=raise_on_failure)
 
         te_planner = TimeExpandedPlanner(self.warehouse, self.reservation_table)
-        return te_planner.plan(
+        t_start = time.perf_counter()
+        traj = te_planner.plan(
             start=start,
             goal=goal,
             start_time=start_time,
@@ -143,6 +175,19 @@ class AStarPlanner:
             hold_at_goal=hold_at_goal,
             raise_on_failure=raise_on_failure,
         )
+        elapsed_ms = round((time.perf_counter() - t_start) * 1000.0, 3)
+        if traj is not None:
+            self.last_plan_stats = {
+                "algorithm": "Space-Time A* (x, y, t)",
+                "start": tuple(start),
+                "goal": tuple(goal),
+                "path_length": len(traj),
+                "nodes_explored": getattr(te_planner, "last_nodes_explored", len(traj)),
+                "planning_time_ms": elapsed_ms,
+                "path_cost": max(0, len(traj) - 1),
+                "obstacles_encountered": len(getattr(self.warehouse, "dynamic_obstacles", set())),
+            }
+        return traj
 
     def plan(
         self,

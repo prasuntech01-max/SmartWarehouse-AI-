@@ -1494,6 +1494,101 @@ function buildRoboticArms(scene) {
 
   scene.add(armGroup);
   state.groups.roboticArms = armGroup;
+  buildBackgroundAutomationCell(scene);
+}
+
+/** Separate industrial robotic automation cell in vacant background space (isolated from main 15x15 ops grid) */
+function buildBackgroundAutomationCell(scene) {
+  const cellGroup = new THREE.Group();
+  cellGroup.name = 'backgroundAutomationCell';
+  const cx = TOTAL_W - 14;
+  const cz = 22;
+
+  // Raised industrial safety deck
+  const deck = new THREE.Mesh(
+    new THREE.BoxGeometry(14, 0.25, 16),
+    new THREE.MeshStandardMaterial({ color: 0x111827, roughness: 0.7, metalness: 0.4 })
+  );
+  deck.position.set(cx, 0.125, cz);
+  deck.receiveShadow = true;
+  deck.matrixAutoUpdate = false;
+  deck.updateMatrix();
+  cellGroup.add(deck);
+
+  // Yellow safety border strips
+  const borderMat = materials.yellowGuard || new THREE.MeshStandardMaterial({ color: 0xffd600, roughness: 0.4 });
+  const bN = new THREE.Mesh(new THREE.BoxGeometry(14.2, 0.08, 0.2), borderMat);
+  bN.position.set(cx, 0.28, cz - 8);
+  const bS = bN.clone();
+  bS.position.set(cx, 0.28, cz + 8);
+  cellGroup.add(bN, bS);
+
+  // Feeder & Outbound Mini-Conveyors inside the cell
+  const convMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.5, metalness: 0.6 });
+  const feeder = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.75, 10), convMat);
+  feeder.position.set(cx - 3.6, 0.5, cz);
+  const outbound = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.75, 10), convMat);
+  outbound.position.set(cx + 3.6, 0.5, cz);
+  cellGroup.add(feeder, outbound);
+
+  // Dual articulated sorting arms on pedestals
+  const arm1 = buildArticulatedArm();
+  arm1.position.set(cx, 0.25, cz - 2.6);
+  arm1.userData.animPhase = 0.0;
+  arm1.userData.isCellArm = true;
+  cellGroup.add(arm1);
+
+  const arm2 = buildArticulatedArm();
+  arm2.position.set(cx, 0.25, cz + 2.6);
+  arm2.userData.animPhase = Math.PI;
+  arm2.userData.isCellArm = true;
+  cellGroup.add(arm2);
+
+  // Demonstration sorting crates moving between feeder & outbound
+  const crateColors = [0x00f0ff, 0xf59e0b, 0x10b981, 0x3b82f6];
+  state.cellCrates = [];
+  for (let i = 0; i < 4; i++) {
+    const crate = new THREE.Mesh(
+      new THREE.BoxGeometry(0.65, 0.48, 0.65),
+      new THREE.MeshStandardMaterial({ color: crateColors[i], roughness: 0.45, metalness: 0.2 })
+    );
+    crate.position.set(cx - 3.6, 1.12, cz - 3.5 + i * 2.3);
+    crate.castShadow = true;
+    crate.userData.phase = i * 1.4;
+    crate.userData.cx = cx;
+    crate.userData.cz = cz;
+    cellGroup.add(crate);
+    state.cellCrates.push(crate);
+  }
+
+  // Overhead gantry & cell signage
+  const gantry = new THREE.Mesh(new THREE.BoxGeometry(13.5, 0.25, 0.35), materials.steelDark);
+  gantry.position.set(cx, 5.4, cz - 7.5);
+  cellGroup.add(gantry);
+
+  const signTex = makeCanvasTex(512, 96, (ctx, w, h) => {
+    ctx.fillStyle = '#07101f';
+    ctx.fillRect(0, 0, w, h);
+    ctx.strokeStyle = '#00f0ff';
+    ctx.lineWidth = 4;
+    ctx.strokeRect(4, 4, w - 8, h - 8);
+    ctx.fillStyle = '#00f0ff';
+    ctx.font = 'bold 26px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('AUTOMATED SORTING CELL', w / 2, 42);
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = 'bold 16px sans-serif';
+    ctx.fillText('DUAL-ARM PICK & PLACE DEMO', w / 2, 70);
+  });
+  const signMesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(7.2, 1.35),
+    new THREE.MeshBasicMaterial({ map: signTex, side: THREE.DoubleSide })
+  );
+  signMesh.position.set(cx, 5.4, cz - 7.25);
+  cellGroup.add(signMesh);
+
+  scene.add(cellGroup);
+  state.groups.backgroundCell = cellGroup;
 }
 
 function buildArticulatedArm() {
@@ -2541,21 +2636,38 @@ function updatePathRibbons(paths) {
   const chevronTex = makeChevronTexture();
   chevronTex.wrapS = THREE.RepeatWrapping;
   chevronTex.wrapT = THREE.RepeatWrapping;
-  chevronTex.repeat.set(4, 1);
+  chevronTex.repeat.set(6, 1);
 
   for (const path of paths) {
     if (!path || path.length < 2) continue;
     const points = path.map(([gx, gy]) => {
       const wp = gridToWorld(gx, gy);
-      return new THREE.Vector3(wp.x, 0.1, wp.z);
+      return new THREE.Vector3(wp.x, 0.14, wp.z);
     });
-    const curve = new THREE.CatmullRomCurve3(points, false, 'catmullrom', 0.3);
-    const tubeGeo = new THREE.TubeGeometry(curve, Math.max(points.length * 4, 8), 0.12, 6, false);
-    const tubeMat = new THREE.MeshBasicMaterial({ map: chevronTex, transparent: true, opacity: 0.6, side: THREE.DoubleSide });
+    const curve = new THREE.CatmullRomCurve3(points, false, 'catmullrom', 0.2);
+    const tubeGeo = new THREE.TubeGeometry(curve, Math.max(points.length * 4, 8), 0.14, 8, false);
+    const tubeMat = new THREE.MeshBasicMaterial({
+      color: 0x00f0ff,
+      map: chevronTex,
+      transparent: true,
+      opacity: 0.85,
+      side: THREE.DoubleSide,
+    });
     const tube = new THREE.Mesh(tubeGeo, tubeMat);
     tube.userData.chevronOffset = 0;
     overlayGroup.add(tube);
     state.overlays.paths.push(tube);
+
+    // Goal target ring at end of A* route
+    const endPt = points[points.length - 1];
+    const goalRing = new THREE.Mesh(
+      new THREE.RingGeometry(0.45, 0.62, 24),
+      new THREE.MeshBasicMaterial({ color: 0x00f0ff, side: THREE.DoubleSide, transparent: true, opacity: 0.85 })
+    );
+    goalRing.rotation.x = -Math.PI / 2;
+    goalRing.position.set(endPt.x, 0.08, endPt.z);
+    overlayGroup.add(goalRing);
+    state.overlays.paths.push(goalRing);
   }
 }
 
@@ -2636,51 +2748,75 @@ function updateParcels(parcels) {
   if (!state.overlays.parcels) state.overlays.parcels = [];
   state.overlays.parcels.forEach(pMesh => { overlayGroup.remove(pMesh); disposeMesh(pMesh); });
   state.overlays.parcels = [];
+  state.parcelsMap = new Map();
 
   if (!parcels || !Array.isArray(parcels)) return;
 
   for (const p of parcels) {
-    // Only render static parcel when not currently picked up by a robot
-    if (p.status === 'AVAILABLE' || p.status === 'RESERVED') {
-      const loc = p.location || [0, 0];
+    state.parcelsMap.set(p.parcel_id, p);
+    const ptype = String(p.type || p.parcel_type || 'medium_carton').toLowerCase();
+
+    // Render stationary parcel at shelf/pickup or delivered destination (in-transit parcels travel on robot)
+    if (p.status === 'AVAILABLE' || p.status === 'RESERVED' || p.status === 'DELIVERED') {
+      const loc = p.status === 'DELIVERED' ? (p.location || p.destination || [0, 0]) : (p.location || p.pickup_cell || [0, 0]);
       const wp = gridToWorld(loc[0], loc[1]);
-      let geo, mat;
-      if (p.parcel_type === 'WOODEN_PALLET' || p.parcel_type === 'HEAVY_INDUSTRIAL') {
-        geo = new THREE.BoxGeometry(0.8, 0.45, 0.8);
-        mat = materials.palletWood || new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 0.8 });
-      } else if (p.parcel_type === 'TOTE_BLUE') {
-        geo = new THREE.BoxGeometry(0.45, 0.3, 0.35);
-        mat = materials.blueTote || new THREE.MeshStandardMaterial({ color: 0x0284c7, roughness: 0.5 });
-      } else if (p.parcel_type === 'TOTE_RED' || p.parcel_type === 'HAZMAT') {
-        geo = new THREE.BoxGeometry(0.45, 0.3, 0.35);
-        mat = new THREE.MeshStandardMaterial({ color: 0xef4444, roughness: 0.5 });
-      } else if (p.parcel_type === 'FRAGILE') {
-        geo = new THREE.BoxGeometry(0.4, 0.3, 0.35);
-        mat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.5 });
+      let geo, mat, yPos = 0.25;
+
+      if (ptype === 'wooden_pallet' || ptype === 'heavy_industrial') {
+        geo = new THREE.BoxGeometry(0.82, 0.42, 0.82);
+        mat = materials.palletWood || new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 0.78 });
+        yPos = 0.22;
+      } else if (ptype === 'large_carton') {
+        geo = new THREE.BoxGeometry(0.62, 0.44, 0.52);
+        mat = new THREE.MeshStandardMaterial({ color: 0xb47b44, roughness: 0.7 });
+        yPos = 0.24;
+      } else if (ptype === 'small_box' || ptype === 'courier_package') {
+        geo = new THREE.BoxGeometry(0.28, 0.2, 0.24);
+        mat = new THREE.MeshStandardMaterial({ color: 0xe2a86b, roughness: 0.65 });
+        yPos = 0.14;
+      } else if (ptype === 'tote_blue' || ptype === 'plastic_container') {
+        geo = new THREE.BoxGeometry(0.46, 0.28, 0.36);
+        mat = materials.blueTote || new THREE.MeshStandardMaterial({ color: 0x0284c7, roughness: 0.45 });
+        yPos = 0.18;
+      } else if (ptype === 'tote_grey') {
+        geo = new THREE.BoxGeometry(0.46, 0.28, 0.36);
+        mat = new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.45 });
+        yPos = 0.18;
+      } else if (ptype === 'fragile') {
+        geo = new THREE.BoxGeometry(0.42, 0.32, 0.36);
+        mat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.45 });
+        yPos = 0.2;
       } else {
-        geo = new THREE.BoxGeometry(0.4, 0.3, 0.35);
-        mat = materials.carton || new THREE.MeshStandardMaterial({ color: 0xc8965a, roughness: 0.8 });
+        geo = new THREE.BoxGeometry(0.44, 0.32, 0.38);
+        mat = materials.carton || new THREE.MeshStandardMaterial({ color: 0xc8965a, roughness: 0.75 });
+        yPos = 0.2;
       }
+
       const parcelMesh = new THREE.Mesh(geo, mat);
-      parcelMesh.position.set(wp.x, 0.25, wp.z);
+      parcelMesh.position.set(wp.x, yPos, wp.z);
       parcelMesh.castShadow = true;
       parcelMesh.userData.isParcel = true;
       parcelMesh.userData.parcelId = p.parcel_id;
       overlayGroup.add(parcelMesh);
       state.overlays.parcels.push(parcelMesh);
-    } else if (p.status === 'DELIVERED') {
-      const dest = p.destination || [0, 0];
-      const wp = gridToWorld(dest[0], dest[1]);
-      const geo = new THREE.BoxGeometry(0.4, 0.3, 0.35);
-      const mat = new THREE.MeshStandardMaterial({ color: 0x10b981, roughness: 0.6 });
-      const parcelMesh = new THREE.Mesh(geo, mat);
-      parcelMesh.position.set(wp.x, 0.2, wp.z);
-      parcelMesh.castShadow = true;
-      parcelMesh.userData.isParcel = true;
-      parcelMesh.userData.parcelId = p.parcel_id;
-      overlayGroup.add(parcelMesh);
-      state.overlays.parcels.push(parcelMesh);
+
+      // Highlight selected, reserved, or delivered status
+      if (state.selectedParcelId === p.parcel_id || p.status === 'RESERVED' || p.status === 'DELIVERED') {
+        const ringColor = state.selectedParcelId === p.parcel_id ? 0x00f0ff : (p.status === 'DELIVERED' ? 0x10b981 : 0xf59e0b);
+        const ring = new THREE.Mesh(
+          new THREE.RingGeometry(0.42, 0.52, 20),
+          new THREE.MeshBasicMaterial({ color: ringColor, side: THREE.DoubleSide, transparent: true, opacity: 0.85 })
+        );
+        ring.rotation.x = -Math.PI / 2;
+        ring.position.set(wp.x, 0.05, wp.z);
+        overlayGroup.add(ring);
+        state.overlays.parcels.push(ring);
+      }
     }
+  }
+
+  if (state.selectedParcelId && state.parcelsMap.has(state.selectedParcelId)) {
+    updateParcelPanel(state.parcelsMap.get(state.selectedParcelId));
   }
 }
 
@@ -3091,6 +3227,7 @@ function initBridge() {
     getTheme: () => state.activeTheme,
     setTheme: (t) => setTheme(t),
     setCamPreset: (p) => setCamPresetSmooth(p),
+    selectParcel: (pid) => selectParcel(pid),
   };
   window.__SW_SOUND = soundEngine;
   window.__SW_VOICE = voiceEngine;
@@ -3901,6 +4038,26 @@ function initHUD() {
   // ── Sound System HUD Controls ──
   initAudioHUD();
 
+  // Parcel panel close & focus
+  document.getElementById('parcel-panel-close')?.addEventListener('click', () => {
+    const p = document.getElementById('parcel-panel');
+    if (p) p.style.display = 'none';
+    state.selectedParcelId = null;
+  });
+  document.getElementById('parcel-focus-btn')?.addEventListener('click', () => {
+    const p = state.selectedParcelId ? state.parcelsMap?.get(state.selectedParcelId) : null;
+    if (!p) return;
+    const loc = p.location || p.pickup_cell || p.destination;
+    if (loc) {
+      const wp = gridToWorld(loc[0], loc[1]);
+      state.camAnim = createCamAnim(
+        { pos: state.camera.position.clone(), target: state.controls.target.clone() },
+        { pos: new THREE.Vector3(wp.x + 5, 4.5, wp.z + 5), target: new THREE.Vector3(wp.x, 0.3, wp.z) },
+        1.0
+      );
+    }
+  });
+
   // Keyboard input
   window.addEventListener('keydown', (e) => {
     state.keysDown.add(e.code);
@@ -3928,25 +4085,56 @@ function initHUD() {
       mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(mouse, state.camera);
 
-      // Check all robot meshes
-      const robotMeshes = [];
+      // Check all robot meshes AND parcel meshes
+      const pickTargets = [];
       state.robots.forEach(entry => {
         entry.group.traverse(child => {
-          if (child.isMesh) robotMeshes.push(child);
+          if (child.isMesh) pickTargets.push(child);
         });
       });
+      if (state.overlays.parcels) {
+        state.overlays.parcels.forEach(pm => {
+          if (pm.isMesh && pm.userData.isParcel) pickTargets.push(pm);
+        });
+      }
 
-      const intersects = raycaster.intersectObjects(robotMeshes, false);
+      const intersects = raycaster.intersectObjects(pickTargets, false);
       if (intersects.length > 0) {
-        // Find parent AMR group
-        let obj = intersects[0].object;
-        while (obj && !obj.userData.isAMR) obj = obj.parent;
-        if (obj && obj.userData.isAMR) {
-          selectRobot(obj.userData.id);
+        const hit = intersects[0].object;
+        if (hit.userData.isParcel && hit.userData.parcelId) {
+          selectParcel(hit.userData.parcelId);
+        } else {
+          let obj = hit;
+          while (obj && !obj.userData.isAMR) obj = obj.parent;
+          if (obj && obj.userData.isAMR) {
+            selectRobot(obj.userData.id);
+          }
         }
       }
     });
   }
+}
+
+function selectParcel(parcelId) {
+  state.selectedParcelId = parcelId;
+  const p = state.parcelsMap?.get(parcelId);
+  const panel = document.getElementById('parcel-panel');
+  if (panel && p) {
+    panel.style.display = 'flex';
+    updateParcelPanel(p);
+  }
+}
+
+function updateParcelPanel(p) {
+  const setTxt = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+  setTxt('parcel-panel-id', p.parcel_id || '—');
+  setTxt('parcel-panel-status', p.status || '—');
+  setTxt('parcel-panel-type', String(p.type || 'carton').replace(/_/g, ' ').toUpperCase());
+  setTxt('parcel-panel-rack', p.rack_slot_id || '—');
+  setTxt('parcel-panel-loc', p.location ? `(${p.location[0]}, ${p.location[1]})` : (p.carrier_robot ? `On Robot R${p.carrier_robot}` : 'In Transit'));
+  setTxt('parcel-panel-dest', p.destination ? `(${p.destination[0]}, ${p.destination[1]})` : '—');
+  setTxt('parcel-panel-specs', `${p.dimensions || '—'} • ${p.weight_kg || 0}kg`);
+  setTxt('parcel-panel-robot', p.assigned_robot ? `R0${p.assigned_robot}` : 'Unassigned');
 }
 
 const FLEET_INFO = {
@@ -4104,6 +4292,9 @@ function animate() {
     // Animate rack LEDs
     animateRackLEDs(dt);
 
+    // Animate Hero Humanoid Robot & Holographic Warehouse Overlays
+    animateHeroAndHoloOverlays(dt);
+
     // Animate scanline (wireframe mode)
     if (state.activeTheme === 'wireframe' && state.scanlinePlane) {
       state.scanlinePlane.position.z = (state.animTime * 10) % TOTAL_D;
@@ -4148,26 +4339,39 @@ function animate() {
 }
 
 function animateRoboticArms(dt) {
-  const armGroup = state.groups.roboticArms;
-  if (!armGroup) return;
+  const animateArmGroup = (grp) => {
+    if (!grp) return;
+    grp.children.forEach(child => {
+      if (!child.userData.isRoboticArm) return;
+      const phase = child.userData.animPhase || 0;
+      const t = state.animTime + phase;
+      const shoulderAngle = Math.sin(t * 0.8) * 0.4 - 0.3;
+      const elbowAngle = Math.sin(t * 0.8 + 1) * 0.5 + 0.5;
+      const wristAngle = Math.sin(t * 1.2) * 0.3;
+      const gripOpen = Math.sin(t * 1.6) * 0.02 + 0.06;
 
-  armGroup.children.forEach(child => {
-    if (!child.userData.isRoboticArm) return;
-    const phase = child.userData.animPhase || 0;
-    const t = state.animTime + phase;
+      if (child.userData.isCellArm) {
+        child.rotation.y = Math.sin(t * 0.65) * 1.35;
+      }
+      if (child.userData.shoulder) child.userData.shoulder.rotation.x = shoulderAngle;
+      if (child.userData.elbow) child.userData.elbow.rotation.x = elbowAngle;
+      if (child.userData.wrist) child.userData.wrist.rotation.z = wristAngle;
+      if (child.userData.finger1) child.userData.finger1.position.x = -gripOpen;
+      if (child.userData.finger2) child.userData.finger2.position.x = gripOpen;
+    });
+  };
+  animateArmGroup(state.groups.roboticArms);
+  animateArmGroup(state.groups.backgroundCell);
 
-    // Pick/place cycle (smooth sinusoidal)
-    const shoulderAngle = Math.sin(t * 0.8) * 0.4 - 0.3;
-    const elbowAngle = Math.sin(t * 0.8 + 1) * 0.5 + 0.5;
-    const wristAngle = Math.sin(t * 1.2) * 0.3;
-    const gripOpen = Math.sin(t * 1.6) * 0.02 + 0.06;
-
-    if (child.userData.shoulder) child.userData.shoulder.rotation.x = shoulderAngle;
-    if (child.userData.elbow) child.userData.elbow.rotation.x = elbowAngle;
-    if (child.userData.wrist) child.userData.wrist.rotation.z = wristAngle;
-    if (child.userData.finger1) child.userData.finger1.position.x = -gripOpen;
-    if (child.userData.finger2) child.userData.finger2.position.x = gripOpen;
-  });
+  // Animate sorting crates in separate background automation cell
+  if (state.cellCrates) {
+    for (const crate of state.cellCrates) {
+      const cycle = ((state.animTime * 0.45 + crate.userData.phase) % (Math.PI * 2));
+      const transfer = 0.5 - 0.5 * Math.cos(cycle);
+      crate.position.x = THREE.MathUtils.lerp(crate.userData.cx - 3.6, crate.userData.cx + 3.6, transfer);
+      crate.position.y = 1.12 + Math.sin(transfer * Math.PI) * 1.15;
+    }
+  }
 }
 
 function animateConveyors(dt) {
@@ -4240,6 +4444,296 @@ function animateRackLEDs(dt) {
   const leds = state.groups.rackLEDs;
   if (!leds || !leds.material) return;
   leds.material.emissiveIntensity = 0.2 + 0.2 * Math.sin(state.animTime * 1.5);
+}
+
+/** Build transparent cyan holographic wireframe overlays + glowing perimeter pathways */
+function buildHolographicWarehouseOverlays(scene) {
+  const holoGroup = new THREE.Group();
+  holoGroup.name = 'holographicOverlays';
+
+  const wireMat = new THREE.LineBasicMaterial({ color: 0x00f0ff, transparent: true, opacity: 0.26 });
+  for (const [x0, x1] of X_BLOCKS) {
+    for (const [y0, y1] of Y_BLOCKS) {
+      const w = (x1 - x0 + 1) * CELL;
+      const d = (y1 - y0 + 1) * CELL;
+      const cx = GRID_OX + x0 * CELL + w / 2;
+      const cz = GRID_OZ + y0 * CELL + d / 2;
+      const boxGeo = new THREE.BoxGeometry(w + 0.25, RACK_H + 0.2, d + 0.25);
+      const edges = new THREE.EdgesGeometry(boxGeo);
+      boxGeo.dispose();
+      const wire = new THREE.LineSegments(edges, wireMat);
+      wire.position.set(cx, (RACK_H + 0.2) / 2, cz);
+      wire.matrixAutoUpdate = false;
+      wire.updateMatrix();
+      holoGroup.add(wire);
+    }
+  }
+
+  // Subtle glowing perimeter digital pathway frame
+  const pw = GRID_COLS * CELL + 3.0;
+  const pd = GRID_ROWS * CELL + 3.0;
+  const perimGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(pw, 0.04, pd));
+  const perimLine = new THREE.LineSegments(perimGeo, new THREE.LineBasicMaterial({ color: 0x00e5ff, transparent: true, opacity: 0.45 }));
+  perimLine.position.set(GRID_OX + (GRID_COLS * CELL) / 2, 0.03, GRID_OZ + (GRID_ROWS * CELL) / 2);
+  holoGroup.add(perimLine);
+
+  // Travelling pathway light pulses along perimeter
+  state.holoPulses = [];
+  const pulseGeo = new THREE.SphereGeometry(0.18, 10, 10);
+  for (let i = 0; i < 4; i++) {
+    const pm = new THREE.Mesh(pulseGeo, new THREE.MeshBasicMaterial({ color: i % 2 === 0 ? 0x00f0ff : 0x38bdf8, transparent: true, opacity: 0.85 }));
+    pm.position.set(GRID_OX, 0.12, GRID_OZ);
+    pm.userData.phase = i * 0.25;
+    holoGroup.add(pm);
+    state.holoPulses.push(pm);
+  }
+
+  // Subtle floor scanning beam
+  const scanGeo = new THREE.PlaneGeometry(GRID_COLS * CELL + 4, 0.45);
+  scanGeo.rotateX(-Math.PI / 2);
+  const scanMat = new THREE.MeshBasicMaterial({ color: 0x00f0ff, transparent: true, opacity: 0.12, side: THREE.DoubleSide });
+  const scanPlane = new THREE.Mesh(scanGeo, scanMat);
+  scanPlane.position.set(GRID_OX + (GRID_COLS * CELL) / 2, 0.04, GRID_OZ);
+  holoGroup.add(scanPlane);
+  state.holoScanPlane = scanPlane;
+
+  scene.add(holoGroup);
+  state.groups.holoOverlays = holoGroup;
+}
+
+/** Build ONE Next-Gen Alien-Titanium Hero Humanoid Robot (metallic silver/titanium/graphite, violet & cyan energy circuits) */
+function buildHeroWarehouseRobot(scene) {
+  const hero = new THREE.Group();
+  hero.name = 'heroHumanoidRobot';
+  hero.userData.isHeroDecor = true;
+
+  const titaniumMat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.78, roughness: 0.18 });
+  const silverMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.85, roughness: 0.22 });
+  const graphiteMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, metalness: 0.72, roughness: 0.34 });
+  const ledCyanMat = new THREE.MeshBasicMaterial({ color: 0x00f0ff });
+  const ledVioletMat = new THREE.MeshBasicMaterial({ color: 0xa855f7 });
+
+  // Standing holographic pad with dual cyan/violet rings
+  const pad = new THREE.Mesh(
+    new THREE.RingGeometry(0.88, 1.08, 36),
+    new THREE.MeshBasicMaterial({ color: 0x00f0ff, side: THREE.DoubleSide, transparent: true, opacity: 0.55 })
+  );
+  pad.rotation.x = -Math.PI / 2;
+  pad.position.y = 0.03;
+  hero.add(pad);
+  hero.userData.padRing = pad;
+
+  const padInner = new THREE.Mesh(
+    new THREE.RingGeometry(0.55, 0.63, 32),
+    new THREE.MeshBasicMaterial({ color: 0xa855f7, side: THREE.DoubleSide, transparent: true, opacity: 0.4 })
+  );
+  padInner.rotation.x = -Math.PI / 2;
+  padInner.position.y = 0.035;
+  hero.add(padInner);
+
+  // Pelvis & waist mechanical core
+  const pelvis = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.14, 0.18, 12), graphiteMat);
+  pelvis.position.y = 0.98;
+  hero.add(pelvis);
+
+  // Tapered mechanical legs
+  for (const side of [-1, 1]) {
+    const sx = side * 0.14;
+    const hip = new THREE.Mesh(new THREE.SphereGeometry(0.08, 12, 12), graphiteMat);
+    hip.position.set(sx, 0.94, 0);
+    hero.add(hip);
+
+    const thigh = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.068, 0.38, 12), titaniumMat);
+    thigh.position.set(sx, 0.72, 0);
+    thigh.castShadow = true;
+    hero.add(thigh);
+
+    const thighStrip = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.28, 0.024), ledCyanMat);
+    thighStrip.position.set(sx + side * 0.078, 0.72, 0.02);
+    hero.add(thighStrip);
+
+    const knee = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.065, 0.13, 12), graphiteMat);
+    knee.rotation.z = Math.PI / 2;
+    knee.position.set(sx, 0.5, 0);
+    hero.add(knee);
+
+    const shin = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.052, 0.4, 12), silverMat);
+    shin.position.set(sx, 0.28, 0);
+    shin.castShadow = true;
+    hero.add(shin);
+
+    const shinCircuit = new THREE.Mesh(new THREE.BoxGeometry(0.016, 0.28, 0.022), ledVioletMat);
+    shinCircuit.position.set(sx + side * 0.064, 0.28, 0.02);
+    hero.add(shinCircuit);
+
+    const foot = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.08, 0.28), graphiteMat);
+    foot.position.set(sx, 0.04, 0.05);
+    foot.castShadow = true;
+    hero.add(foot);
+  }
+
+  // Torso group (animated breathing & subtle weight shift)
+  const torso = new THREE.Group();
+  torso.position.y = 1.12;
+  hero.add(torso);
+  hero.userData.torso = torso;
+
+  const abdomen = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.12, 0.24, 12), graphiteMat);
+  abdomen.position.y = 0.06;
+  torso.add(abdomen);
+
+  // V-tapered titanium chest armor
+  const chest = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.17, 0.42, 8), titaniumMat);
+  chest.scale.set(1.0, 1.0, 0.65);
+  chest.position.y = 0.34;
+  chest.castShadow = true;
+  torso.add(chest);
+
+  // Illuminated chest energy core
+  const chestCore = new THREE.Mesh(new THREE.TorusGeometry(0.075, 0.016, 10, 24), ledCyanMat);
+  chestCore.position.set(0, 0.36, 0.155);
+  torso.add(chestCore);
+  hero.userData.chestCore = chestCore;
+
+  const chestInner = new THREE.Mesh(new THREE.CircleGeometry(0.05, 18), ledCyanMat);
+  chestInner.position.set(0, 0.36, 0.152);
+  torso.add(chestInner);
+
+  // Violet & cyan energy circuits + layered shoulder pauldrons & articulated arms
+  for (const side of [-1, 1]) {
+    const chestStrip = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.018, 0.02), ledVioletMat);
+    chestStrip.position.set(side * 0.13, 0.44, 0.15);
+    chestStrip.rotation.z = side * -0.25;
+    torso.add(chestStrip);
+
+    const pauldron = new THREE.Mesh(new THREE.SphereGeometry(0.11, 12, 10, 0, Math.PI * 2, 0, Math.PI * 0.6), titaniumMat);
+    pauldron.position.set(side * 0.30, 0.48, 0);
+    pauldron.rotation.z = side * -0.35;
+    pauldron.castShadow = true;
+    torso.add(pauldron);
+
+    const armGrp = new THREE.Group();
+    armGrp.position.set(side * 0.31, 0.42, 0);
+    torso.add(armGrp);
+    if (side === -1) hero.userData.leftArm = armGrp;
+    else hero.userData.rightArm = armGrp;
+
+    const shoulderJoint = new THREE.Mesh(new THREE.SphereGeometry(0.068, 12, 12), graphiteMat);
+    armGrp.add(shoulderJoint);
+
+    const upperArm = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.048, 0.28, 10), silverMat);
+    upperArm.position.y = -0.16;
+    upperArm.castShadow = true;
+    armGrp.add(upperArm);
+
+    const elbow = new THREE.Mesh(new THREE.SphereGeometry(0.052, 10, 10), graphiteMat);
+    elbow.position.y = -0.32;
+    armGrp.add(elbow);
+
+    const forearm = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.04, 0.26, 10), titaniumMat);
+    forearm.position.set(0, -0.46, 0.03);
+    forearm.rotation.x = -0.18;
+    forearm.castShadow = true;
+    armGrp.add(forearm);
+
+    const armStrip = new THREE.Mesh(new THREE.BoxGeometry(0.016, 0.18, 0.018), ledCyanMat);
+    armStrip.position.set(side * 0.048, -0.46, 0.04);
+    armGrp.add(armStrip);
+
+    const palm = new THREE.Mesh(new THREE.BoxGeometry(0.065, 0.085, 0.038), graphiteMat);
+    palm.position.set(0, -0.62, 0.06);
+    armGrp.add(palm);
+    for (let f = -1.5; f <= 1.5; f += 1) {
+      const finger = new THREE.Mesh(new THREE.BoxGeometry(0.013, 0.055, 0.015), silverMat);
+      finger.position.set(f * 0.015, -0.68, 0.06);
+      armGrp.add(finger);
+    }
+  }
+
+  // Sculpted Alien-Inspired Head
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.075, 0.11, 12), graphiteMat);
+  neck.position.y = 0.59;
+  torso.add(neck);
+
+  const head = new THREE.Group();
+  head.position.y = 0.72;
+  torso.add(head);
+  hero.userData.head = head;
+
+  const skull = new THREE.Mesh(new THREE.SphereGeometry(0.125, 16, 14), titaniumMat);
+  skull.scale.set(0.88, 1.18, 1.05);
+  skull.castShadow = true;
+  head.add(skull);
+
+  const visor = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.055, 0.03), graphiteMat);
+  visor.position.set(0, 0.015, 0.11);
+  head.add(visor);
+
+  for (const es of [-1, 1]) {
+    const eye = new THREE.Mesh(new THREE.BoxGeometry(0.044, 0.018, 0.02), ledCyanMat);
+    eye.position.set(es * 0.042, 0.018, 0.122);
+    eye.rotation.z = es * -0.14;
+    head.add(eye);
+
+    const earRing = new THREE.Mesh(new THREE.TorusGeometry(0.04, 0.01, 8, 20), ledCyanMat);
+    earRing.rotation.y = Math.PI / 2;
+    earRing.position.set(es * 0.112, 0.01, 0);
+    head.add(earRing);
+  }
+
+  hero.scale.setScalar(1.24);
+  hero.position.set(GRID_OX + GRID_COLS * CELL + 5.5, 0, GRID_OZ + GRID_ROWS * CELL - 4.0);
+  hero.rotation.y = -Math.PI * 0.72;
+  scene.add(hero);
+  state.heroRobot = hero;
+}
+
+function animateHeroAndHoloOverlays(dt) {
+  const t = state.animTime;
+
+  // Animate Hero Humanoid Robot idle poise
+  const hero = state.heroRobot;
+  if (hero) {
+    if (hero.userData.torso) {
+      hero.userData.torso.position.y = 1.12 + Math.sin(t * 1.4) * 0.012;
+    }
+    if (hero.userData.head) {
+      hero.userData.head.rotation.y = Math.sin(t * 0.55) * 0.24;
+      hero.userData.head.rotation.x = Math.sin(t * 0.9) * 0.04;
+    }
+    if (hero.userData.leftArm) {
+      hero.userData.leftArm.rotation.x = Math.sin(t * 0.85) * 0.05;
+      hero.userData.leftArm.rotation.z = -0.06 + Math.sin(t * 0.7) * 0.02;
+    }
+    if (hero.userData.rightArm) {
+      hero.userData.rightArm.rotation.x = -Math.sin(t * 0.85) * 0.05;
+      hero.userData.rightArm.rotation.z = 0.06 - Math.sin(t * 0.7) * 0.02;
+    }
+    if (hero.userData.padRing && hero.userData.padRing.material) {
+      hero.userData.padRing.material.opacity = 0.38 + 0.22 * Math.sin(t * 2.2);
+    }
+  }
+
+  // Animate holographic floor scan beam
+  if (state.holoScanPlane) {
+    const span = GRID_ROWS * CELL + 2;
+    state.holoScanPlane.position.z = GRID_OZ - 1 + ((t * 3.2) % span);
+  }
+
+  // Animate perimeter pathway pulses
+  if (state.holoPulses) {
+    const x0 = GRID_OX - 1.5;
+    const x1 = GRID_OX + GRID_COLS * CELL + 1.5;
+    const z0 = GRID_OZ - 1.5;
+    const z1 = GRID_OZ + GRID_ROWS * CELL + 1.5;
+    for (const p of state.holoPulses) {
+      const u = ((t * 0.12 + p.userData.phase) % 1.0) * 4.0;
+      if (u < 1) p.position.set(THREE.MathUtils.lerp(x0, x1, u), 0.1, z0);
+      else if (u < 2) p.position.set(x1, 0.1, THREE.MathUtils.lerp(z0, z1, u - 1));
+      else if (u < 3) p.position.set(THREE.MathUtils.lerp(x1, x0, u - 2), 0.1, z1);
+      else p.position.set(x0, 0.1, THREE.MathUtils.lerp(z1, z0, u - 3));
+    }
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -4345,6 +4839,8 @@ async function init() {
   // Floating Holographic Zone HUD & Environmental Particles
   buildFloatingZoneHUD(scene);
   buildEnvironmentalParticles(scene);
+  buildHolographicWarehouseOverlays(scene);
+  buildHeroWarehouseRobot(scene);
 
   // Overlays
   buildOverlayGroup(scene);

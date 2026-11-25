@@ -1,9 +1,12 @@
 const path = require('path');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
 module.exports = {
-  entry: './src/index.js',
+  entry: {
+    main: './src/index.js',
+    lab_backdrop: './src/lab_backdrop.js',
+  },
   output: {
-    filename: 'bundle.js',
+    filename: (pathData) => (pathData.chunk.name === 'main' ? 'bundle.js' : '[name].js'),
     path: path.resolve(__dirname, 'dist'),
     clean: true,
   },
