@@ -5,6 +5,7 @@ from typing import Any
 from ui.components import render_section_header
 from ui.auth_helper import check_permission
 from core.task_manager import TaskPriority
+from persistence.repo import WarehouseOpsRepo, AuditLogRepo
 
 
 def render_operations_page(sim: Any, analytics_service: Any) -> None:
@@ -54,6 +55,15 @@ def render_operations_page(sim: Any, analytics_service: Any) -> None:
                 delivery_station=delivery_choice,
                 priority=priority_choice.value,
             )
+            if new_task is not None:
+                WarehouseOpsRepo.upsert_task(new_task)
+                AuditLogRepo.log(
+                    actor=st.session_state.get("username", "system"),
+                    action="TASK_CREATED",
+                    target=f"task:{new_task.task_id}",
+                    status="SUCCESS",
+                    details=f"pick={pick_choice}, drop={delivery_choice}, priority={priority_choice.value}",
+                )
             st.success(msg)
             analytics_service.invalidate_cache_if_needed()
             st.rerun()
@@ -81,6 +91,16 @@ def render_operations_page(sim: Any, analytics_service: Any) -> None:
         if st.button("👉 Manually Dispatch", key="op_man_dispatch", disabled=not (can_operate and selected_task_id and selected_robot_id_man), use_container_width=True):
             ok, msg = sim.assign_task_manually(selected_task_id, selected_robot_id_man)
             if ok:
+                task_obj = sim.task_manager.tasks.get(selected_task_id)
+                if task_obj is not None:
+                    WarehouseOpsRepo.upsert_task(task_obj)
+                AuditLogRepo.log(
+                    actor=st.session_state.get("username", "system"),
+                    action="TASK_DISPATCHED",
+                    target=f"task:{selected_task_id}",
+                    status="SUCCESS",
+                    details=f"robot=R{selected_robot_id_man}",
+                )
                 st.success(msg)
             else:
                 st.error(msg)
@@ -101,6 +121,17 @@ def render_operations_page(sim: Any, analytics_service: Any) -> None:
             st.write("")
             if st.button("❌ Cancel", key="op_cancel_btn", disabled=not (can_operate and cancel_tid is not None), use_container_width=True):
                 ok, msg = sim.cancel_task(cancel_tid)
+                if ok:
+                    task_obj = sim.task_manager.tasks.get(cancel_tid)
+                    if task_obj is not None:
+                        WarehouseOpsRepo.upsert_task(task_obj)
+                    AuditLogRepo.log(
+                        actor=st.session_state.get("username", "system"),
+                        action="TASK_CANCELLED",
+                        target=f"task:{cancel_tid}",
+                        status="SUCCESS",
+                        details="Cancelled via Operations UI",
+                    )
                 st.warning(msg)
                 analytics_service.invalidate_cache_if_needed()
                 st.rerun()

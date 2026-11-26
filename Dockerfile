@@ -16,10 +16,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the whole project (excluding files in .dockerignore)
 COPY . .
 
-# Install Node.js for Three.js build (use official node image for simplicity)
+# Install Node.js for Three.js build
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y nodejs && \
-    cd frontend/threejs_digital_twin && npm ci && npm run build && cd ../../..
+    cd frontend/threejs_digital_twin && npm install && npm run build && cd ../..
 
 # Expose Streamlit default port
 EXPOSE 8501
@@ -28,4 +28,4 @@ EXPOSE 8501
 ENV STREAMLIT_SERVER_HEADLESS=true
 
 # Run the app
-CMD ["python", "-m", "streamlit", "run", "app.py", "--server.port", "8501"]
+CMD ["sh", "-c", "python -m streamlit run app.py --server.address=0.0.0.0 --server.port=${PORT:-8501}"]

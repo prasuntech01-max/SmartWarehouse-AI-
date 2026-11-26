@@ -201,13 +201,19 @@ def render_command_centre_view(sim: Any, ai_engine: Any, analytics_service: Anal
 
     snapshot = analytics_service.get_snapshot()
 
-    # ── Top KPI Ribbon (6 enterprise cards matching target image) ────────────
+    # ── Top KPI Ribbon (6 enterprise cards using real simulation/analytics data) ──
+    inv_stats_top = sim.inventory_manager.get_stats() if hasattr(sim, "inventory_manager") else {}
+    total_inventory_val = inv_stats_top.get("total_parcels", 0)
     total_robots = len(sim.robots)
-    active_robots = sum(1 for r in sim.robots.values() if r.state not in ('IDLE', 'DOCKED'))
-    completed_tasks = snapshot.summary_kpis.get("completed_tasks", {}).value or 186
-    throughput_val = 1248
-    utilization_val = snapshot.summary_kpis.get("fleet_utilization", {}).value or 87
+    active_robots = sum(1 for r in sim.robots.values() if r.state not in ('IDLE', 'DOCKED', 'E_STOPPED', 'PAUSED'))
+    completed_tasks = snapshot.summary_kpis["completed_tasks"].value if "completed_tasks" in snapshot.summary_kpis else sum(r.completed_tasks for r in sim.robots.values())
+    throughput_val = snapshot.summary_kpis["throughput"].value if "throughput" in snapshot.summary_kpis else 0.0
+    utilization_val = snapshot.summary_kpis["fleet_utilization"].value if "fleet_utilization" in snapshot.summary_kpis else round((active_robots / max(total_robots, 1)) * 100, 1)
     active_alerts = len(rec_engine.evaluate_all()) if rec_engine else 0
+    if getattr(sim, "global_e_stop", False):
+        active_alerts += 1
+    alert_badge_text = "E-STOP" if getattr(sim, "global_e_stop", False) else ("ALERT" if active_alerts > 0 else "NORMAL")
+    alert_badge_col = "#ef4444" if getattr(sim, "global_e_stop", False) else ("#f59e0b" if active_alerts > 0 else "#10b981")
 
     st.markdown(
         f"""
@@ -217,42 +223,42 @@ def render_command_centre_view(sim: Any, ai_engine: Any, analytics_service: Anal
                     <span class="sw-kpi-title">Total Inventory</span>
                     <span class="sw-kpi-icon">📦</span>
                 </div>
-                <div class="sw-kpi-val">12,540 <span class="sw-kpi-delta">+2.8%</span></div>
+                <div class="sw-kpi-val">{total_inventory_val} <span class="sw-kpi-delta">Parcels</span></div>
             </div>
             <div class="sw-kpi-card-v2 kpi-accent-green">
                 <div class="sw-kpi-top">
                     <span class="sw-kpi-title">Active Robots</span>
                     <span class="sw-kpi-icon">🤖</span>
                 </div>
-                <div class="sw-kpi-val">{active_robots if active_robots > 0 else 5} / {total_robots} <span style="font-size: 11px; color: #10b981; font-weight: 600;">Running</span></div>
+                <div class="sw-kpi-val">{active_robots} / {total_robots} <span style="font-size: 11px; color: #10b981; font-weight: 600;">Active</span></div>
             </div>
             <div class="sw-kpi-card-v2">
                 <div class="sw-kpi-top">
-                    <span class="sw-kpi-title">Tasks (Today)</span>
+                    <span class="sw-kpi-title">Tasks Completed</span>
                     <span class="sw-kpi-icon">📋</span>
                 </div>
-                <div class="sw-kpi-val">{completed_tasks} <span class="sw-kpi-delta">+12%</span></div>
+                <div class="sw-kpi-val">{completed_tasks} <span class="sw-kpi-delta">Verified</span></div>
             </div>
             <div class="sw-kpi-card-v2 kpi-accent-purple">
                 <div class="sw-kpi-top">
                     <span class="sw-kpi-title">Throughput</span>
                     <span class="sw-kpi-icon">⚡</span>
                 </div>
-                <div class="sw-kpi-val">1,248 <span style="font-size: 12px; color: #94a3b8;">/ hr</span></div>
+                <div class="sw-kpi-val">{throughput_val} <span style="font-size: 12px; color: #94a3b8;">/ 100 steps</span></div>
             </div>
             <div class="sw-kpi-card-v2">
                 <div class="sw-kpi-top">
                     <span class="sw-kpi-title">Utilization</span>
                     <span class="sw-kpi-icon">📊</span>
                 </div>
-                <div class="sw-kpi-val">{utilization_val}% <span class="sw-kpi-delta">+4.2%</span></div>
+                <div class="sw-kpi-val">{utilization_val}% <span class="sw-kpi-delta">Live</span></div>
             </div>
             <div class="sw-kpi-card-v2 kpi-accent-amber">
                 <div class="sw-kpi-top">
                     <span class="sw-kpi-title">Active Alerts</span>
                     <span class="sw-kpi-icon">🔔</span>
                 </div>
-                <div class="sw-kpi-val">0 <span style="font-size: 11px; background: rgba(16, 185, 129, 0.2); color: #10b981; padding: 2px 6px; border-radius: 4px;">NORMAL</span></div>
+                <div class="sw-kpi-val">{active_alerts} <span style="font-size: 11px; background: rgba(16, 185, 129, 0.15); color: {alert_badge_col}; padding: 2px 6px; border-radius: 4px;">{alert_badge_text}</span></div>
             </div>
         </div>
         """,
@@ -816,6 +822,16 @@ def render_command_centre_view(sim: Any, ai_engine: Any, analytics_service: Anal
                 if st.button("🚀 Assign Shelf-to-Robot Pickup & Delivery (A*)", key="cc_assign_parcel_btn", use_container_width=True):
                     ok, msg = sim.assign_parcel_task(sel_pid, sel_bot_parcel, destination=sel_dest)
                     if ok:
+                        from persistence.repo import WarehouseOpsRepo, AuditLogRepo
+                        if sel_p is not None:
+                            WarehouseOpsRepo.upsert_parcel(sel_p)
+                        AuditLogRepo.log(
+                            actor=st.session_state.get("username", "system"),
+                            action="PARCEL_DISPATCHED",
+                            target=f"parcel:{sel_pid}",
+                            status="SUCCESS",
+                            details=f"robot=R{sel_bot_parcel}, dest={sel_dest}",
+                        )
                         st.success(msg)
                     else:
                         st.error(msg)

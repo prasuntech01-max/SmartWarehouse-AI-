@@ -7,9 +7,10 @@ than leaking sqlite3 errors.
 import datetime
 import json
 import logging
+import secrets
 import sqlite3
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from .db import get_connection, run_migrations
 
@@ -93,12 +94,19 @@ def _row_to_incident(row: sqlite3.Row) -> Incident:
 class UserRepo:
     @staticmethod
     def create(username: str, password_hash: bytes, role: str = "VIEWER") -> User:
+        clean_name = str(username or "").strip()
+        if not clean_name:
+            raise ValueError("Username cannot be empty.")
+        if role not in {"ADMIN", "OPERATOR", "VIEWER"}:
+            raise ValueError(f"Invalid role: {role}")
+        if UserRepo.get_by_username(clean_name) is not None:
+            raise ValueError(f"User creation failed: username '{clean_name}' already exists.")
         conn = get_connection()
         cur = conn.cursor()
         try:
             cur.execute(
                 "INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
-                (username, password_hash, role),
+                (clean_name, password_hash, role),
             )
             user_id = cur.lastrowid
             conn.commit()
@@ -109,11 +117,28 @@ class UserRepo:
 
     @staticmethod
     def get_by_username(username: str) -> Optional[User]:
+        clean_name = str(username or "").strip()
+        if not clean_name:
+            return None
         conn = get_connection()
         cur = conn.cursor()
-        cur.execute("SELECT * FROM users WHERE username = ?", (username,))
+        cur.execute("SELECT * FROM users WHERE LOWER(TRIM(username)) = LOWER(?)", (clean_name,))
         row = cur.fetchone()
         return _row_to_user(row) if row else None
+
+    @staticmethod
+    def unlock_user(user_id: int) -> None:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("UPDATE users SET failed_attempts = 0, locked_until = NULL WHERE id = ?", (user_id,))
+        conn.commit()
+
+    @staticmethod
+    def update_password_hash(user_id: int, new_hash: bytes) -> None:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("UPDATE users SET password_hash = ? WHERE id = ?", (new_hash, user_id))
+        conn.commit()
 
     @staticmethod
     def get_by_id(user_id: int) -> Optional[User]:
@@ -245,6 +270,33 @@ class IncidentRepo:
         rows = cur.fetchall()
         return [_row_to_incident(r) for r in rows]
 
+    @staticmethod
+    def clear_active_incidents(actor: str, tick: int = 0, notes: str = "Operator acknowledged and cleared") -> int:
+        import hashlib
+        conn = get_connection()
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT id FROM incidents WHERE status = 'ACTIVE'")
+            active_ids = [r[0] for r in cur.fetchall()]
+            if not active_ids:
+                return 0
+            cur.execute("UPDATE incidents SET status = 'CLEARED' WHERE status = 'ACTIVE'")
+            prev_row = cur.execute("SELECT hash FROM hazard_audits ORDER BY id DESC LIMIT 1").fetchone()
+            prev_hash = prev_row[0] if prev_row else None
+            for inc_id in active_ids:
+                payload = f"{inc_id}|CLEAR|{actor}|{tick}|{notes}|{prev_hash or ''}"
+                cur_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+                cur.execute(
+                    "INSERT INTO hazard_audits (incident_id, action, username, tick, prev_hash, hash) VALUES (?, ?, ?, ?, ?, ?)",
+                    (inc_id, "CLEAR", actor, int(tick), prev_hash, cur_hash),
+                )
+                prev_hash = cur_hash
+            conn.commit()
+            return len(active_ids)
+        except Exception:
+            conn.rollback()
+            raise
+
 
 # ---------------------------------------------------------------------------
 # Module 13: Benchmark Repository
@@ -336,6 +388,8 @@ class BenchmarkRepo:
                 "created_at": r["created_at"],
             })
         return result
+
+
 
     @staticmethod
     def get_run(run_id: str) -> Optional[dict]:
@@ -445,4 +499,218 @@ class ReportRepo:
                 "created_at": r["created_at"],
             })
         return result
+
+
+# ---------------------------------------------------------------------------
+# Session, Audit, Config, Sensor & Warehouse Ops Repositories
+# ---------------------------------------------------------------------------
+
+class SessionRepo:
+    @staticmethod
+    def create_session(user_id: int, ttl_hours: int = 12) -> str:
+        token = secrets.token_urlsafe(32)
+        now = datetime.datetime.utcnow()
+        expires = now + datetime.timedelta(hours=ttl_hours)
+        conn = get_connection()
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "INSERT INTO sessions (token, user_id, issued_at, last_activity, expires_at) VALUES (?, ?, ?, ?, ?)",
+                (token, user_id, now, now, expires),
+            )
+            conn.commit()
+            return token
+        except Exception:
+            conn.rollback()
+            raise
+
+    @staticmethod
+    def get_valid_session(token: str) -> Optional[Dict[str, Any]]:
+        if not token:
+            return None
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM sessions WHERE token = ?", (token,))
+        row = cur.fetchone()
+        if not row:
+            return None
+        expires_at = row["expires_at"]
+        if isinstance(expires_at, str):
+            expires_at = datetime.datetime.fromisoformat(expires_at)
+        if expires_at <= datetime.datetime.utcnow():
+            SessionRepo.revoke_session(token)
+            return None
+        return {
+            "token": row["token"],
+            "user_id": row["user_id"],
+            "issued_at": row["issued_at"],
+            "last_activity": row["last_activity"],
+            "expires_at": expires_at,
+        }
+
+    @staticmethod
+    def revoke_session(token: str) -> None:
+        if not token:
+            return
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM sessions WHERE token = ?", (token,))
+        conn.commit()
+
+    @staticmethod
+    def purge_expired() -> int:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM sessions WHERE expires_at <= ?", (datetime.datetime.utcnow(),))
+        deleted = cur.rowcount
+        conn.commit()
+        return deleted
+
+
+class AuditLogRepo:
+    @staticmethod
+    def log(actor: str, action: str, target: str = "", status: str = "SUCCESS", details: str = "") -> None:
+        conn = get_connection()
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "INSERT INTO audit_logs (actor, action, target, status, details) VALUES (?, ?, ?, ?, ?)",
+                (str(actor or "system"), str(action), str(target), str(status), str(details)),
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+
+    @staticmethod
+    def list_recent(limit: int = 50) -> List[Dict[str, Any]]:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT id, actor, action, target, status, details, created_at FROM audit_logs ORDER BY id DESC LIMIT ?", (limit,))
+        return [
+            {
+                "id": r["id"],
+                "actor": r["actor"],
+                "action": r["action"],
+                "target": r["target"],
+                "status": r["status"],
+                "details": r["details"],
+                "created_at": r["created_at"],
+            }
+            for r in cur.fetchall()
+        ]
+
+
+class ConfigRepo:
+    @staticmethod
+    def get(key: str, default: Optional[str] = None) -> Optional[str]:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT value FROM system_config WHERE key = ?", (key,))
+        row = cur.fetchone()
+        return row["value"] if row else default
+
+    @staticmethod
+    def set(key: str, value: str) -> None:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO system_config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, str(value)),
+        )
+        conn.commit()
+
+
+class SensorRepo:
+    @staticmethod
+    def record(sensor_id: str, value: float, unit: str, tick: int, data_source: str = "SIMULATED") -> None:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO sensor_readings (sensor_id, value, unit, tick, data_source) VALUES (?, ?, ?, ?, ?)",
+            (sensor_id, float(value), unit, int(tick), data_source),
+        )
+        conn.commit()
+
+    @staticmethod
+    def list_recent(limit: int = 100) -> List[Dict[str, Any]]:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM sensor_readings ORDER BY id DESC LIMIT ?", (limit,))
+        return [dict(r) for r in cur.fetchall()]
+
+
+class WarehouseOpsRepo:
+    @staticmethod
+    def upsert_task(task: Any) -> None:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """INSERT INTO warehouse_tasks
+               (task_id, pick_x, pick_y, drop_x, drop_y, priority, status, assigned_robot, created_at_step, completed_at_step)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(task_id) DO UPDATE SET
+                 status = excluded.status,
+                 assigned_robot = excluded.assigned_robot,
+                 completed_at_step = excluded.completed_at_step,
+                 updated_at = CURRENT_TIMESTAMP""",
+            (
+                int(task.task_id),
+                int(task.pick_spot[0]), int(task.pick_spot[1]),
+                int(task.delivery_station[0]), int(task.delivery_station[1]),
+                int(task.priority),
+                str(task.status),
+                task.assigned_robot,
+                int(task.created_at_step),
+                task.completed_at_step,
+            ),
+        )
+        conn.commit()
+
+    @staticmethod
+    def list_tasks(limit: int = 100) -> List[Dict[str, Any]]:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM warehouse_tasks ORDER BY task_id DESC LIMIT ?", (limit,))
+        return [dict(r) for r in cur.fetchall()]
+
+    @staticmethod
+    def upsert_parcel(parcel: Any) -> None:
+        conn = get_connection()
+        cur = conn.cursor()
+        loc = parcel.location
+        dest = parcel.destination
+        ptype = parcel.parcel_type.value if hasattr(parcel.parcel_type, "value") else str(parcel.parcel_type)
+        assigned = getattr(parcel, "assigned_robot", getattr(parcel, "carrier_robot", None))
+        cur.execute(
+            """INSERT INTO parcel_records
+               (parcel_id, parcel_type, rack_slot_id, status, location_x, location_y, dest_x, dest_y, assigned_robot)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(parcel_id) DO UPDATE SET
+                 status = excluded.status,
+                 location_x = excluded.location_x,
+                 location_y = excluded.location_y,
+                 dest_x = excluded.dest_x,
+                 dest_y = excluded.dest_y,
+                 assigned_robot = excluded.assigned_robot,
+                 updated_at = CURRENT_TIMESTAMP""",
+            (
+                str(parcel.parcel_id),
+                str(ptype),
+                parcel.rack_slot_id,
+                str(parcel.status),
+                int(loc[0]) if loc else None,
+                int(loc[1]) if loc else None,
+                int(dest[0]) if dest else None,
+                int(dest[1]) if dest else None,
+                assigned,
+            ),
+        )
+        conn.commit()
+
+    @staticmethod
+    def list_parcels(limit: int = 100) -> List[Dict[str, Any]]:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM parcel_records ORDER BY parcel_id ASC LIMIT ?", (limit,))
+        return [dict(r) for r in cur.fetchall()]
 

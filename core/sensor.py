@@ -116,7 +116,7 @@ class Sensor:
     connected: bool = True
     health_ok: bool = True
     # Function that, given (rng, step, simulator), returns a raw float value
-    _generator: Callable[[random.Random, int, Any], float] = field(repr=False)
+    _generator: Callable[[random.Random, int, Any], float] = field(default=lambda rng, step, sim: 0.0, repr=False)
 
     def __post_init__(self) -> None:
         self.unit = self.sensor_type.unit

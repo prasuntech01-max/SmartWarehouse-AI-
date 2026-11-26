@@ -24,7 +24,6 @@ data/*.db
 data/
 
 # Build artifacts & dependencies
-frontend/threejs_digital_twin/dist/
 frontend/threejs_digital_twin/node_modules/
 frontend/threejs_digital_twin/package-lock.json
 

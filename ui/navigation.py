@@ -74,14 +74,15 @@ def render_sidebar_navigation() -> str:
             unsafe_allow_html=True,
         )
 
-        # Quick Role Switcher / Login Form
+
+        # Quick Role Switcher / Login Form (UI restored; role dropdown never grants privileges)
         with st.expander("🔐 Security Role Switcher", expanded=False):
-            sel_role = st.selectbox("Switch Active Role", ["ADMIN", "OPERATOR", "VIEWER"], index=["ADMIN", "OPERATOR", "VIEWER"].index(role) if role in ["ADMIN", "OPERATOR", "VIEWER"] else 0)
-            if sel_role != role:
-                st.session_state.user_role = sel_role
-                st.session_state.username = sel_role.lower()
-                st.rerun()
-                st.rerun()
+            st.selectbox(
+                "Switch Active Role",
+                ["ADMIN", "OPERATOR", "VIEWER"],
+                index=["ADMIN", "OPERATOR", "VIEWER"].index(role) if role in ["ADMIN", "OPERATOR", "VIEWER"] else 0,
+                key="nav_role_sel",
+            )
 
             u_in = st.text_input("Username", key="nav_u_in")
             p_in = st.text_input("Password", type="password", key="nav_p_in")

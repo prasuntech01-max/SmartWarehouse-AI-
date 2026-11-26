@@ -21,8 +21,8 @@ import pandas as pd
 from typing import Any
 from ui.components import render_section_header
 from ui.auth_helper import check_permission, login_user
-from persistence.repo import UserRepo
-from persistence.db import get_connection
+from persistence.repo import UserRepo, AuditLogRepo, ConfigRepo
+from persistence.db import get_connection, backup_database, verify_backup_restore_to_temp
 from auth.crypto import hash_password
 
 
@@ -58,31 +58,24 @@ def render_admin_page() -> None:
 
         st.markdown("### 🔐 Administrator Authentication & Privilege Elevation")
         st.markdown(
-            "Elevate your session to the **ADMIN** role using administrator credentials or the academic demonstration bypass."
+            "Elevate your session to the **ADMIN** role by signing in with verified administrator credentials."
         )
 
         c_login, c_demo = st.columns([1.2, 1.0])
         with c_login:
             st.markdown("#### 🔑 Administrator Sign-In")
-            adm_user = st.text_input("Admin Username", value="admin", key="elevate_u_in")
-            adm_pass = st.text_input("Admin Password", type="password", value="Admin@123", key="elevate_p_in")
+            adm_user = st.text_input("Admin Username", value="", placeholder="e.g. admin", key="elevate_u_in")
+            adm_pass = st.text_input("Admin Password", type="password", value="", placeholder="Enter administrator password", key="elevate_p_in")
             if st.button("🔓 Authenticate as Administrator", key="btn_elevate_admin", use_container_width=True):
                 ok, msg = login_user(adm_user, adm_pass)
                 if ok:
-                    st.success(f"Authentication successful: Elevated to {st.session_state.user_role} clearance.")
+                    st.success(f"Authentication successful: Signed in as {st.session_state.username} ({st.session_state.user_role}).")
                     st.rerun()
                 else:
                     st.error(msg)
 
         with c_demo:
-            st.markdown("#### ⚡ Quick Role Switcher")
-            st.caption("Instantly toggle your active session role for testing RBAC boundaries.")
-            if st.button("🚀 Set Role to ADMIN (Full Access)", key="btn_quick_admin", use_container_width=True):
-                st.session_state.user_role = "ADMIN"
-                st.session_state.username = "admin"
-                st.session_state.authenticated = True
-                st.rerun()
-
+            st.markdown("#### 🛡️ Access Control Policy")
             st.markdown(
                 """
                 <div style="font-size: 11px; color: #94A3B8; background: #0F172A; border: 1px solid #1E293B; border-radius: 6px; padding: 10px; margin-top: 10px;">
@@ -158,8 +151,15 @@ def render_admin_page() -> None:
             if new_u and new_p:
                 try:
                     pwd_hash = hash_password(new_p)
-                    UserRepo.create(new_u, pwd_hash, role=new_r)
-                    st.success(f"User account `{new_u}` ({new_r}) created successfully!")
+                    created = UserRepo.create(new_u, pwd_hash, role=new_r)
+                    AuditLogRepo.log(
+                        actor=st.session_state.get("username", "admin"),
+                        action="USER_CREATED",
+                        target=f"user:{created.username}",
+                        status="SUCCESS",
+                        details=f"role={created.role}",
+                    )
+                    st.success(f"User account `{created.username}` ({created.role}) created successfully!")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error creating user: {e}")
@@ -167,8 +167,8 @@ def render_admin_page() -> None:
                 st.warning("Please supply both username and password.")
 
         st.divider()
-        st.markdown("#### 🔄 Role Modification")
-        c_mod1, c_mod2, c_mod3 = st.columns([1.5, 1.5, 1.0])
+        st.markdown("#### 🔄 Role Modification & Account Unlock")
+        c_mod1, c_mod2, c_mod3, c_mod4 = st.columns([1.4, 1.3, 0.9, 0.9])
         with c_mod1:
             target_username = st.text_input("Target Username", key="adm_target_u")
         with c_mod2:
@@ -181,14 +181,41 @@ def render_admin_page() -> None:
                     u_obj = UserRepo.get_by_username(target_username)
                     if u_obj:
                         UserRepo.set_role(u_obj.id, target_role)
-                        st.success(f"User `{target_username}` updated to role `{target_role}`.")
+                        AuditLogRepo.log(
+                            actor=st.session_state.get("username", "admin"),
+                            action="ROLE_UPDATED",
+                            target=f"user:{u_obj.username}",
+                            status="SUCCESS",
+                            details=f"new_role={target_role}",
+                        )
+                        st.success(f"User `{u_obj.username}` updated to role `{target_role}`.")
+                        st.rerun()
+                    else:
+                        st.error(f"User `{target_username}` not found.")
+        with c_mod4:
+            st.write("")
+            st.write("")
+            if st.button("Unlock User", key="adm_unlock_user_btn", use_container_width=True):
+                if target_username:
+                    u_obj = UserRepo.get_by_username(target_username)
+                    if u_obj:
+                        UserRepo.unlock_user(u_obj.id)
+                        AuditLogRepo.log(
+                            actor=st.session_state.get("username", "admin"),
+                            action="USER_UNLOCKED",
+                            target=f"user:{u_obj.username}",
+                            status="SUCCESS",
+                            details="Failed attempts & lock cleared",
+                        )
+                        st.success(f"Account `{u_obj.username}` unlocked.")
                         st.rerun()
                     else:
                         st.error(f"User `{target_username}` not found.")
 
     with tab_db:
         st.markdown("#### 💾 SQLite Database Snapshot & Backup")
-        db_path = "data/smartwarehouse.db"
+        from persistence.db import DEFAULT_DB_PATH
+        db_path = DEFAULT_DB_PATH
         db_size_kb = os.path.getsize(db_path) / 1024 if os.path.exists(db_path) else 0
 
         c_stat1, c_stat2, c_stat3 = st.columns(3)
@@ -201,12 +228,15 @@ def render_admin_page() -> None:
 
         col_b1, col_b2 = st.columns([1.5, 1.0])
         with col_b1:
-            if st.button("⚡ Create Manual Database Backup Snapshot", key="adm_backup_btn", use_container_width=True):
-                os.makedirs("backups", exist_ok=True)
-                bk_name = f"backups/smartwarehouse_backup_{int(time.time())}.db"
+            if st.button("⚡ Create & Verify Database Backup Snapshot", key="adm_backup_btn", use_container_width=True):
                 try:
-                    shutil.copy2(db_path, bk_name)
-                    st.success(f"Snapshot created successfully: `{bk_name}`")
+                    bk_name, integrity = backup_database()
+                    ok_restore, restore_msg = verify_backup_restore_to_temp(bk_name)
+                    if ok_restore:
+                        AuditLogRepo.log(actor=active_user, action="DB_BACKUP", target=bk_name, status="SUCCESS", details=restore_msg)
+                        st.success(f"Snapshot created & verified: `{bk_name}` ({restore_msg})")
+                    else:
+                        st.warning(f"Snapshot created `{bk_name}`, restore check warning: {restore_msg}")
                 except Exception as e:
                     st.error(f"Backup failed: {e}")
 
@@ -225,9 +255,9 @@ def render_admin_page() -> None:
             conn = get_connection()
             cur = conn.cursor()
             table_counts = []
-            for tbl in ["users", "tasks", "incidents", "telemetry_logs", "simulation_runs"]:
+            for tbl in ["users", "sessions", "incidents", "sensor_readings", "benchmark_runs", "benchmark_trials", "report_records", "audit_logs", "warehouse_tasks", "parcel_records"]:
                 try:
-                    cur.execute(f"SELECT COUNT(*) FROM {tbl}")
+                    cur.execute(f"SELECT COUNT(*) FROM [{tbl}]")
                     cnt = cur.fetchone()[0]
                     table_counts.append({"Table Name": tbl, "Record Count": cnt, "Integrity": "VERIFIED"})
                 except Exception:
@@ -260,13 +290,14 @@ def render_admin_page() -> None:
 
     with tab_audit:
         st.markdown("#### 📜 System & Access Audit Logs")
-        audit_events = [
-            {"Timestamp": time.strftime("%Y-%m-%d %H:%M:%S"), "Actor": active_user, "Event": "ADMIN_SESSION_VERIFIED", "Status": "SUCCESS", "Origin": "127.0.0.1"},
-            {"Timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time() - 120)), "Actor": "system", "Event": "WAL_CHECKPOINT_PASS", "Status": "SUCCESS", "Origin": "internal"},
-            {"Timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time() - 360)), "Actor": "admin", "Event": "USER_AUTHENTICATION", "Status": "SUCCESS", "Origin": "127.0.0.1"},
-            {"Timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time() - 720)), "Actor": "operator", "Event": "TASK_DISPATCH_BATCH", "Status": "SUCCESS", "Origin": "127.0.0.1"},
-        ]
-        st.dataframe(pd.DataFrame(audit_events), use_container_width=True, hide_index=True)
+        try:
+            audit_rows = AuditLogRepo.list_recent(limit=50)
+            if audit_rows:
+                st.dataframe(pd.DataFrame(audit_rows), use_container_width=True, hide_index=True)
+            else:
+                st.info("No audit log entries recorded yet.")
+        except Exception as e:
+            st.warning(f"Could not load audit logs: {e}")
 
 
 def render_settings_page() -> None:
@@ -279,6 +310,42 @@ def render_settings_page() -> None:
 
     from ui.sound_panel import render_sound_control_panel
     render_sound_control_panel(key_prefix="settings_snd")
+
+    st.divider()
+    st.markdown("#### 💾 Persistent System Configuration (`system_config`)")
+    cur_speed = ConfigRepo.get("default_sim_speed", "1.0x") or "1.0x"
+    cur_voice = ConfigRepo.get("default_ai_voice", "British Female AI") or "British Female AI"
+    s_col1, s_col2 = st.columns(2)
+    with s_col1:
+        speed_opts = ["0.5x", "1.0x", "2.0x", "3.0x"]
+        sel_speed = st.selectbox(
+            "Default Simulation Speed",
+            options=speed_opts,
+            index=speed_opts.index(cur_speed) if cur_speed in speed_opts else 1,
+            key="cfg_default_speed",
+        )
+    with s_col2:
+        voice_opts = ["British Female AI", "American Female AI", "Deep Futuristic AI"]
+        sel_voice = st.selectbox(
+            "Default AI Voice Profile",
+            options=voice_opts,
+            index=voice_opts.index(cur_voice) if cur_voice in voice_opts else 0,
+            key="cfg_default_voice",
+        )
+    can_cfg = check_permission("system_settings")
+    if st.button("💾 Save Persistent Platform Settings", key="cfg_save_btn", disabled=not can_cfg):
+        ConfigRepo.set("default_sim_speed", sel_speed)
+        ConfigRepo.set("default_ai_voice", sel_voice)
+        AuditLogRepo.log(
+            actor=st.session_state.get("username", "guest"),
+            action="CONFIG_UPDATED",
+            target="system_config",
+            status="SUCCESS",
+            details=f"speed={sel_speed}, voice={sel_voice}",
+        )
+        st.success("Configuration saved to SQLite `system_config`.")
+    if not can_cfg:
+        st.caption("🔒 Sign in as ADMIN to modify persistent platform configuration.")
 
     st.divider()
     st.markdown("#### 📋 Platform Build Information")

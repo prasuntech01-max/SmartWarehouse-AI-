@@ -5,7 +5,7 @@ import pandas as pd
 from typing import Any
 from ui.components import render_section_header, render_kpi_card
 from ui.auth_helper import check_permission
-from persistence.repo import IncidentRepo
+from persistence.repo import IncidentRepo, SensorRepo, AuditLogRepo
 
 
 def render_iot_page(sim: Any) -> None:
@@ -28,16 +28,23 @@ def render_iot_page(sim: Any) -> None:
 
     st.divider()
 
-    st.markdown("#### 🌡️ Live Telemetry Streams")
-    sensor_records = [
-        {"Sensor ID": "TEMP-01", "Type": "Temperature", "Location": "(3, 3)", "Value": "24.2 °C", "Status": "NORMAL", "Device": "ESP32-A"},
-        {"Sensor ID": "TEMP-02", "Type": "Temperature", "Location": "(10, 8)", "Value": "25.1 °C", "Status": "NORMAL", "Device": "ESP32-B"},
-        {"Sensor ID": "SMK-01", "Type": "Smoke Concentration", "Location": "(3, 4)", "Value": "0.04 ratio", "Status": "NORMAL", "Device": "ESP32-A"},
-        {"Sensor ID": "GAS-01", "Type": "Gas Leakage", "Location": "(12, 2)", "Value": "0.01 ratio", "Status": "NORMAL", "Device": "ESP32-C"},
-        {"Sensor ID": "HUM-01", "Type": "Humidity", "Location": "(7, 7)", "Value": "48.5 %", "Status": "NORMAL", "Device": "ESP32-B"},
-        {"Sensor ID": "MOT-R1", "Type": "Motor Temp R1", "Location": str(sim.robots[1].pos), "Value": "38.2 °C", "Status": "NORMAL", "Device": "ROBOT-01"},
-    ]
-    st.dataframe(pd.DataFrame(sensor_records), use_container_width=True, hide_index=True)
+    st.markdown("#### 🌡️ Live Telemetry Streams & Persisted Sensor History")
+    if st.button("📡 Sample & Persist Sensor Telemetry Snapshot", key="iot_sample_persist_btn", use_container_width=False):
+        samples = [
+            ("TEMP-01", round(24.0 + (sim.step_count % 5) * 0.2, 2), "°C"),
+            ("SMK-01", 0.04, "ratio"),
+            ("GAS-01", 0.01, "ratio"),
+            ("HUM-01", round(48.0 + (sim.step_count % 4) * 0.3, 2), "%"),
+        ]
+        for sid, val, unit in samples:
+            SensorRepo.record(sid, val, unit, tick=sim.step_count, data_source="SIMULATED")
+        st.success(f"Persisted {len(samples)} simulated sensor readings at tick {sim.step_count}.")
+
+    persisted_sensors = SensorRepo.list_recent(limit=20)
+    if persisted_sensors:
+        st.dataframe(pd.DataFrame(persisted_sensors), use_container_width=True, hide_index=True)
+    else:
+        st.info("No sensor readings persisted in SQLite yet. Click 'Sample & Persist Sensor Telemetry Snapshot' above to record simulated readings.")
 
 
 def render_emergency_page(sim: Any, analytics_service: Any) -> None:
@@ -85,6 +92,15 @@ def render_emergency_page(sim: Any, analytics_service: Any) -> None:
                 st.error(f"Error persisting incident: {e}")
 
         if st.button("✅ Acknowledge & Clear Incident", key="em_clear_btn", disabled=not can_ack, use_container_width=True):
-            st.success("Hazard clearance recorded. All affected corridors restored to walkable status.")
+            actor = st.session_state.get("username", "operator")
+            cleared_count = IncidentRepo.clear_active_incidents(actor=actor, tick=sim.step_count, notes="Cleared via Emergency Response UI")
+            AuditLogRepo.log(
+                actor=actor,
+                action="HAZARD_CLEARED",
+                target="incidents",
+                status="SUCCESS",
+                details=f"cleared={cleared_count}",
+            )
+            st.success(f"Hazard clearance recorded ({cleared_count} active incident(s) cleared and audited in SQLite).")
             analytics_service.invalidate_cache_if_needed()
             st.rerun()

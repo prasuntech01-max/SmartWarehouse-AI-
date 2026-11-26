@@ -406,7 +406,7 @@ class WarehouseSimulator:
         elif cmd_str == "EMERGENCY_STOP":
             robot.e_stopped = True
             robot.state = "E_STOPPED"
-            robot.path.clear()
+            robot.path = []
             robot.path_index = 0
             self.reservation_table.release_future_reservations(robot_id, from_time=self.step_count)
             res = CommandResult(ok=True, reason=f"EMERGENCY STOP engaged on Robot R{robot_id}.", robot_id=robot_id, command=cmd_str, params=params, resulting_pos=robot.pos, resulting_state=robot.state, resulting_mode=robot.mode)
@@ -430,7 +430,7 @@ class WarehouseSimulator:
             return res
 
         elif cmd_str == "STOP":
-            robot.path.clear()
+            robot.path = []
             robot.path_index = 0
             robot.goal = None
             if robot.assigned_task:
@@ -444,7 +444,7 @@ class WarehouseSimulator:
 
         elif cmd_str == "RESET":
             robot.e_stopped = False
-            robot.path.clear()
+            robot.path = []
             robot.path_index = 0
             robot.goal = None
             if robot.carrying_parcel:
